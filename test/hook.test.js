@@ -11,6 +11,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { parseProcesses, hasTranscript } from "../mods/revive/revive.mjs";
 import { hookOwner, hookPayload, needsHint, command, readRecord } from "../mods/revive/lib/core.js";
+import { POSIX_HARNESS } from "./helpers/platform.js";
 
 const ENGINE = resolve("mods/revive/revive.mjs");
 const ID = "0c8b28eb-1111-4222-8333-444455556666";
@@ -79,7 +80,7 @@ delete base.COPILOT_HOME;
 
 const remembered = { "revive.agent": "claude", "revive.session": ID, "revive.shell": "4242" };
 
-test("the foreground agent's SessionStart is remembered, with its flags", () => {
+test("the foreground agent's SessionStart is remembered, with its flags", POSIX_HARNESS, () => {
   const { run, calls, set } = setup();
   run(start);
   const got = set(calls());
@@ -89,26 +90,26 @@ test("the foreground agent's SessionStart is remembered, with its flags", () => 
   assert.equal(got["revive.shell"], "4242");
 });
 
-test("a `claude -p` the agent runs as a tool records nothing", () => {
+test("a `claude -p` the agent runs as a tool records nothing", POSIX_HARNESS, () => {
   const { run, calls } = setup();
   run(start, { nested: true });
   assert.deepEqual(calls(), []);
 });
 
-test("a `claude -p` typed in the terminal records nothing", () => {
+test("a `claude -p` typed in the terminal records nothing", POSIX_HARNESS, () => {
   const { run, calls } = setup({ argv: ["claude", "-p", "summarize this"] });
   run(start);
   run(end("other"));
   assert.deepEqual(calls(), []);
 });
 
-test("a `claude -p` typed in the terminal leaves the remembered session alone", () => {
+test("a `claude -p` typed in the terminal leaves the remembered session alone", POSIX_HARNESS, () => {
   const { run, calls } = setup({ labels: remembered, argv: ["claude", "-p", "summarize this"] });
   run({ ...start, session_id: "11111111-2222-4333-8444-555566667777" });
   assert.deepEqual(calls(), []);
 });
 
-test("Codex exec after global options leaves the remembered interactive session alone", () => {
+test("Codex exec after global options leaves the remembered interactive session alone", POSIX_HARNESS, () => {
   const { run, calls } = setup({ bin: "codex", argv: ["codex", "--model", "o3", "exec", "fix it"],
     labels: { ...remembered, "revive.agent": "codex" } });
   const session_id = "batch-session";
@@ -117,7 +118,7 @@ test("Codex exec after global options leaves the remembered interactive session 
   assert.deepEqual(calls(), []);
 });
 
-test("an automatic resume keeps its original flags through start and compaction for a later manual resume", () => {
+test("an automatic resume keeps its original flags through start and compaction for a later manual resume", POSIX_HARNESS, () => {
   const flags = ["--dangerously-skip-permissions", "--model", "opus"];
   const labels = { ...remembered, "revive.flags": JSON.stringify(flags) };
   const rec = readRecord(labels);
@@ -134,7 +135,7 @@ test("an automatic resume keeps its original flags through start and compaction 
   assert.equal(fixture.set(fixture.calls())["revive.session"], "", "an intentional exit still forgets the session");
 });
 
-test("resume flag context is session-specific and filtered like terminal labels", () => {
+test("resume flag context is session-specific and filtered like terminal labels", POSIX_HARNESS, () => {
   for (const context of ["{broken", JSON.stringify({ agent: "codex", session: ID, flags: ["--yolo"] }),
     JSON.stringify({ agent: "claude", session: "old-session", flags: ["--dangerously-skip-permissions"] })]) {
     const fixture = setup();
@@ -147,7 +148,7 @@ test("resume flag context is session-specific and filtered like terminal labels"
   assert.equal(fixture.set(fixture.calls())["revive.flags"], '["--dangerously-skip-permissions","--model","opus"]');
 });
 
-test("a session's own config folder is remembered by name", () => {
+test("a session's own config folder is remembered by name", POSIX_HARNESS, () => {
   const { run, calls, set } = setup();
   run(start, { env: { CLAUDE_CONFIG_DIR: "/h/.claude-work", CODEX_HOME: "/c" } });
   // Its name only: a label must not choose the folder a resume loads settings from.
@@ -155,37 +156,37 @@ test("a session's own config folder is remembered by name", () => {
   assert.equal(set(calls())["revive.env"], "");
 });
 
-test("a session without a config folder clears an older one's", () => {
+test("a session without a config folder clears an older one's", POSIX_HARNESS, () => {
   const { run, calls, set } = setup({ labels: { ...remembered, "revive.env": '{"CLAUDE_CONFIG_DIR":"/old"}' } });
   run(start);
   assert.equal(set(calls())["revive.env"], "");
 });
 
-test("the command line wins over a previous agent's report", () => {
+test("the command line wins over a previous agent's report", POSIX_HARNESS, () => {
   const { run, calls, set } = setup({ app: "codex" });
   run(start);
   assert.equal(set(calls())["revive.agent"], "claude");
 });
 
-test("ending a session yourself forgets it", () => {
+test("ending a session yourself forgets it", POSIX_HARNESS, () => {
   const { run, calls, set } = setup({ labels: remembered });
   run(end("prompt_input_exit"));
   assert.equal(set(calls())["revive.session"], "");
 });
 
-test("a signal keeps the session as it was", () => {
+test("a signal keeps the session as it was", POSIX_HARNESS, () => {
   const { run, calls } = setup({ labels: remembered });
   run(end("other"));
   assert.deepEqual(calls(), []);
 });
 
-test("/clear leaves the record to the new session's SessionStart", () => {
+test("/clear leaves the record to the new session's SessionStart", POSIX_HARNESS, () => {
   const { run, calls } = setup({ labels: remembered });
   run(end("clear"));
   assert.deepEqual(calls(), []);
 });
 
-test("another session's SessionEnd is ignored", () => {
+test("another session's SessionEnd is ignored", POSIX_HARNESS, () => {
   const { run, calls } = setup({ labels: { ...remembered, "revive.session": "aaaaaaaa-0000-0000-0000-000000000000" } });
   run(end("prompt_input_exit"));
   assert.deepEqual(calls(), []);
@@ -244,7 +245,7 @@ test("an agent behind a wrapper is still the foreground's", () => {
   assert.equal(hookOwner(tool, 70, 20).owned, false);
 });
 
-test("the same session starting again keeps its resumed mark", () => {
+test("the same session starting again keeps its resumed mark", POSIX_HARNESS, () => {
   const { run, calls, set } = setup({ labels: { ...remembered, "revive.resumed": "1700000000000", "revive.at": "5" } });
   run({ ...start, source: "compact" });
   const got = set(calls());
@@ -252,7 +253,7 @@ test("the same session starting again keeps its resumed mark", () => {
   assert.equal(got["revive.at"], "5");
 });
 
-test("a new session starts without a resumed mark", () => {
+test("a new session starts without a resumed mark", POSIX_HARNESS, () => {
   const { run, calls, set } = setup({ labels: { ...remembered, "revive.session": "aaaaaaaa-0000-0000-0000-000000000000", "revive.resumed": "1700000000000" } });
   run({ ...start, source: "clear" });
   const got = set(calls());
@@ -276,7 +277,7 @@ test("a transcript is looked for in the engine's own config folder, never a reco
   }
 });
 
-test("pi's flags and session file come from its extension, since ps shows only `pi`", () => {
+test("pi's flags and session file come from its extension, since ps shows only `pi`", POSIX_HARNESS, () => {
   const { run, calls, set } = setup({ argv: ["pi"], bin: "pi", app: "pi" });
   const file = "/h/.pi/agent/sessions/--w--/2026-11-02T10-00-00-000Z_" + ID + ".jsonl";
   run({ ...start, transcript_path: file, argv: ["pi", "--model", "sonnet", "--thinking", "high", "fix it"] }, { env: { PI_CODING_AGENT_DIR: "/h/.pi-work" } });
@@ -319,7 +320,7 @@ else if (cmd === "get") console.log(JSON.stringify({ address: t, state: "live", 
   return { config, list, transcript };
 }
 
-test("the focused session can be forked only once it has a transcript", () => {
+test("the focused session can be forked only once it has a transcript", POSIX_HARNESS, () => {
   const { config, list, transcript } = listSetup({ ...remembered, "revive.cwd": "/w" });
   // The agent's own sessions/<pid>.json proves the engine looks in its folder.
   mkdirSync(join(config, "sessions"), { recursive: true });
@@ -331,14 +332,14 @@ test("the focused session can be forked only once it has a transcript", () => {
   assert.equal(list()[1].forkable, undefined);
 });
 
-test("a fork isn't blocked when the session's config folder isn't known", () => {
+test("a fork isn't blocked when the session's config folder isn't known", POSIX_HARNESS, () => {
   // A record without env, and no sessions/<pid>.json here: the agent may keep
   // its sessions in a folder this process doesn't know about.
   const { list } = listSetup({ ...remembered, "revive.cwd": "/w" });
   assert.equal(list()[0].forkable, null);
 });
 
-test("a config folder from a label is never believed", () => {
+test("a config folder from a label is never believed", POSIX_HARNESS, () => {
   const own = mkdtempSync(join(tmpdir(), "revive-own-"));
   const { list, transcript } = listSetup({ ...remembered, "revive.cwd": "/w", "revive.env": JSON.stringify({ CLAUDE_CONFIG_DIR: own }) });
   transcript(own);
@@ -348,7 +349,7 @@ test("a config folder from a label is never believed", () => {
   assert.notEqual(entry.forkable, true, "the label's folder holding the session proves nothing");
 });
 
-test("an agent running with nothing on record is listed with its folder", () => {
+test("an agent running with nothing on record is listed with its folder", POSIX_HARNESS, () => {
   const { list } = listSetup({});
   const entry = list()[0];
   assert.equal(entry.rec, null);
@@ -380,7 +381,7 @@ else if (cmd === "label") fs.appendFileSync(${JSON.stringify(join(dir, "labels.t
   return { work, resume, sent: () => JSON.parse(read("sent.json") ?? "null"), labelled: () => read("labels.txt") ?? "" };
 }
 
-test("Resume types the command as is, even when run from inside a herdr terminal", () => {
+test("Resume types the command as is, even when run from inside a herdr terminal", POSIX_HARNESS, () => {
   // From a terminal, `hc send` would deliver the text as a note (<hc from="t9">…</hc>).
   const { work, resume, sent } = resumeSetup();
   assert.equal(resume(), null);
@@ -388,7 +389,7 @@ test("Resume types the command as is, even when run from inside a herdr terminal
   assert.equal(sent().from, null);
 });
 
-test("Resume still refuses a busy program or a shell outside the terminal's process tree", () => {
+test("Resume still refuses a busy program or a shell outside the terminal's process tree", POSIX_HARNESS, () => {
   for (const argv of [["vim"], ["zsh"], ["sh", "-c", "sleep 60"], ["bash", "/tmp/launcher.sh"]]) {
     const fixture = resumeSetup({}, { foreground: { pid: 999999999, argv } });
     assert.match(fixture.resume(), /is busy with/);
@@ -396,19 +397,19 @@ test("Resume still refuses a busy program or a shell outside the terminal's proc
   }
 });
 
-test("Resume by hand refuses a folder that failed the check, and names it", () => {
+test("Resume by hand refuses a folder that failed the check, and names it", POSIX_HARNESS, () => {
   const { resume, sent } = resumeSetup({ "revive.cwd": "/nonexistent/revive-w" });
   assert.match(resume(), /Won't resume: its folder \/nonexistent\/revive-w is missing/);
   assert.equal(sent(), null, "nothing typed: the agent would start elsewhere, with its flags");
 });
 
-test("an agent behind a shell launcher is still recognized by its report", () => {
+test("an agent behind a shell launcher is still recognized by its report", POSIX_HARNESS, () => {
   const fixture = resumeSetup({}, { foreground: { pid: 4243, argv: ["bash", "/tmp/launcher.sh"] }, status: { app: "codex" } });
   assert.match(fixture.resume(), /Codex is already running/);
   assert.equal(fixture.sent(), null);
 });
 
-test("Resume by hand refuses a session with needs, keeps it and shows the command", () => {
+test("Resume by hand refuses a session with needs, keeps it and shows the command", POSIX_HARNESS, () => {
   for (const extra of [{ "revive.needs": '["CODEX_HOME"]' }, { "revive.agent": "pi", "revive.needs": '["--session-dir"]' }]) {
     const { resume, sent, labelled } = resumeSetup(extra);
     const err = resume();
@@ -432,7 +433,7 @@ const cursor = { bin: "cursor-agent", argv: ["cursor-agent", "--force", "--model
 const cursorStart = { hook_event_name: "sessionStart", conversation_id: ID, session_id: ID, generation_id: ID, workspace_roots: ["/w/app"], cursor_version: "2026.10.1", transcript_path: null };
 const cursorEnd = (reason) => ({ hook_event_name: "sessionEnd", conversation_id: ID, session_id: ID, reason, cursor_version: "2026.10.1" });
 
-test("droid's SessionStart is remembered, with its flags", () => {
+test("droid's SessionStart is remembered, with its flags", POSIX_HARNESS, () => {
   const { run, calls, set } = setup(droid);
   run({ ...start, transcript_path: "/Users/me/.factory/projects/-w/s.jsonl" });
   const got = set(calls());
@@ -441,7 +442,7 @@ test("droid's SessionStart is remembered, with its flags", () => {
   assert.equal(got["revive.flags"], '["--auto","high"]');
 });
 
-test("droid's own /exit forgets it, a signal keeps it", () => {
+test("droid's own /exit forgets it, a signal keeps it", POSIX_HARNESS, () => {
   const exit = setup({ ...droid, labels: { ...remembered, "revive.agent": "droid" } });
   exit.run(end("prompt_input_exit"));
   assert.equal(exit.set(exit.calls())["revive.session"], "");
@@ -450,7 +451,7 @@ test("droid's own /exit forgets it, a signal keeps it", () => {
   assert.deepEqual(kill.calls(), []);
 });
 
-test("Cursor's sessionStart is remembered from its conversation id and workspace", () => {
+test("Cursor's sessionStart is remembered from its conversation id and workspace", POSIX_HARNESS, () => {
   const { run, calls, set } = setup(cursor);
   run(cursorStart);
   const got = set(calls());
@@ -460,13 +461,13 @@ test("Cursor's sessionStart is remembered from its conversation id and workspace
   assert.equal(got["revive.flags"], '["--force","--model","gpt-5"]');
 });
 
-test("a bare `agent` that reports itself as Cursor is Cursor", () => {
+test("a bare `agent` that reports itself as Cursor is Cursor", POSIX_HARNESS, () => {
   const { run, calls, set } = setup({ bin: "cursor-agent", argv: ["agent", "--yolo"], app: "cursor" });
   run(cursorStart);
   assert.equal(set(calls())["revive.agent"], "cursor");
 });
 
-test("Cursor's completed session is forgotten; an aborted one is kept", () => {
+test("Cursor's completed session is forgotten; an aborted one is kept", POSIX_HARNESS, () => {
   const done = setup({ ...cursor, labels: { ...remembered, "revive.agent": "cursor" } });
   done.run(cursorEnd("completed"));
   assert.equal(done.set(done.calls())["revive.session"], "");
@@ -483,7 +484,7 @@ const copilotRec = { ...remembered, "revive.agent": "copilot" };
 const settle = (shellPid) => ({ env: { REVIVE_SETTLE_MS: "0", FAKE_PID: String(shellPid) } });
 const deadPid = () => spawnSync("true").pid;
 
-test("Copilot CLI's SessionStart is remembered, with its flags", () => {
+test("Copilot CLI's SessionStart is remembered, with its flags", POSIX_HARNESS, () => {
   const { run, calls, set } = setup(copilot);
   run({ ...start, timestamp: "2026-11-12T16:27:10.315Z", source: "new", initial_prompt: "fix it" });
   const got = set(calls());
@@ -492,7 +493,7 @@ test("Copilot CLI's SessionStart is remembered, with its flags", () => {
   assert.equal(got["revive.flags"], '["--model","gpt-5","--allow-all-tools"]');
 });
 
-test("`copilot -p` records nothing; `gh copilot` is not Copilot CLI", () => {
+test("`copilot -p` records nothing; `gh copilot` is not Copilot CLI", POSIX_HARNESS, () => {
   const once = setup({ ...copilot, argv: ["copilot", "-p", "summarize"] });
   once.run(start);
   assert.deepEqual(once.calls(), []);
@@ -501,13 +502,13 @@ test("`copilot -p` records nothing; `gh copilot` is not Copilot CLI", () => {
   assert.deepEqual(gh.calls(), []);
 });
 
-test("Copilot's user_exit is kept when its shell died with it", () => {
+test("Copilot's user_exit is kept when its shell died with it", POSIX_HARNESS, () => {
   const hangup = setup({ ...copilot, labels: copilotRec });
   hangup.run(end("user_exit"), settle(deadPid()));
   assert.deepEqual(hangup.calls(), []);
 });
 
-test("Copilot's /clear (user_exit, the same process still in the foreground) forgets the cleared session", () => {
+test("Copilot's /clear (user_exit, the same process still in the foreground) forgets the cleared session", POSIX_HARNESS, () => {
   const clear = setup({ ...copilot, labels: copilotRec });
   clear.run(end("user_exit"), settle(process.pid));
   assert.equal(clear.set(clear.calls())["revive.session"], "");
@@ -517,7 +518,7 @@ const settled = async (h) => {
   for (let i = 0; i < 20 && !h.calls().length; i++) await new Promise((r) => setTimeout(r, 50));
 };
 
-test("Copilot's user_exit is kept when another Copilot is in the foreground by then, or a new session is on record", async () => {
+test("Copilot's user_exit is kept when another Copilot is in the foreground by then, or a new session is on record", POSIX_HARNESS, async () => {
   // `copilot --resume <id>` typed again within the wait: it may be this same session.
   const rerun = setup({ ...copilot, labels: copilotRec });
   rerun.run(end("user_exit"), { env: { REVIVE_SETTLE_MS: "300", FAKE_PID: String(process.pid) } });
@@ -531,7 +532,7 @@ test("Copilot's user_exit is kept when another Copilot is in the foreground by t
   assert.deepEqual(next.calls(), []);
 });
 
-test("Copilot's user_exit is settled after the hook returns, by a process the agent's exit can't take down", async () => {
+test("Copilot's user_exit is settled after the hook returns, by a process the agent's exit can't take down", POSIX_HARNESS, async () => {
   const exit = setup({ ...copilot, labels: copilotRec });
   exit.run(end("user_exit"), { env: { REVIVE_SETTLE_MS: "300", FAKE_PID: String(process.pid) } });
   assert.deepEqual(exit.calls(), []);
@@ -539,7 +540,7 @@ test("Copilot's user_exit is settled after the hook returns, by a process the ag
   assert.equal(exit.set(exit.calls())["revive.session"], "");
 });
 
-test("Copilot's completed run is forgotten; an aborted one is kept", () => {
+test("Copilot's completed run is forgotten; an aborted one is kept", POSIX_HARNESS, () => {
   const done = setup({ ...copilot, labels: copilotRec });
   done.run(end("complete"));
   assert.equal(done.set(done.calls())["revive.session"], "");
@@ -581,7 +582,7 @@ test("Copilot's captured hook input reads like Claude Code's; a camelCase hook's
   assert.equal(camel.session, null);
 });
 
-test("Copilot's captured hook input, end to end: recorded, then forgotten or settled", () => {
+test("Copilot's captured hook input, end to end: recorded, then forgotten or settled", POSIX_HARNESS, () => {
   const { run, calls, set } = setup(copilot);
   run(fixture("session-start"));
   assert.equal(set(calls())["revive.session"], "2e9bf9fd-76cc-4d7c-be8d-662501107f55");
@@ -597,7 +598,7 @@ test("Copilot's captured hook input, end to end: recorded, then forgotten or set
   assert.equal(clear.set(clear.calls())["revive.session"], "");
 });
 
-test("omp's SessionStart is remembered with the command line its extension sends", () => {
+test("omp's SessionStart is remembered with the command line its extension sends", POSIX_HARNESS, () => {
   // omp renames its process `omp`: the foreground shows no flags.
   const { run, calls, set } = setup({ bin: "omp", argv: ["omp"], app: "omp" });
   const transcript = `/home/me/.omp/agent/sessions/-w/2026-01-01T00-00-00-000Z_${ID}.jsonl`;
@@ -609,7 +610,7 @@ test("omp's SessionStart is remembered with the command line its extension sends
   assert.equal(got["revive.transcript"], transcript);
 });
 
-test("check resumes into the folder's real path, and only hints at a session it can't resume by itself", () => {
+test("check resumes into the folder's real path, and only hints at a session it can't resume by itself", POSIX_HARNESS, () => {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), "revive-check-")));
   const work = join(dir, "work");
   mkdirSync(work);
@@ -670,7 +671,7 @@ test("a hook that runs while herdr-core is down never calls hc, which would star
   assert.deepEqual(calls(), []);
 });
 
-test("a hook with herdr-core up calls hc, without the agent's CLAUDE_CODE_* variables", async () => {
+test("a hook with herdr-core up calls hc, without the agent's CLAUDE_CODE_* variables", POSIX_HARNESS, async () => {
   const { dir, calls, hook } = callLog();
   const sock = join(dir, "core.sock");
   const server = createServer((c) => c.end());
@@ -721,14 +722,14 @@ sh -c 'WRAPPED_SHELL=$$; export WRAPPED_SHELL; node ${ENGINE} ${operation === "c
   return operation === "resume" && existsSync(join(dir, "sent")) ? readFileSync(join(dir, "sent"), "utf8") : out;
 }
 
-test("a shell a wrapper runs as its child is the terminal's own, and resumes", () => {
+test("a shell a wrapper runs as its child is the terminal's own, and resumes", POSIX_HARNESS, () => {
   assert.match(wrapped(), new RegExp(`codex resume ${ID}`));
 });
 
-test("manual Resume accepts a wrapper's idle child shell, including a stale agent report", () => {
+test("manual Resume accepts a wrapper's idle child shell, including a stale agent report", POSIX_HARNESS, () => {
   assert.match(wrapped({ operation: "resume" }), new RegExp(`codex resume ${ID}`));
 });
 
-test("a shell started by hand inside the terminal's own shell doesn't resume", () => {
+test("a shell started by hand inside the terminal's own shell doesn't resume", POSIX_HARNESS, () => {
   assert.equal(wrapped({ marked: true }), "");
 });
