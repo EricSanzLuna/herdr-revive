@@ -731,10 +731,16 @@ export const shJoin = (argv) => argv.map(shQuote).join(" ");
  * U+2018–U+201B, so each of them is doubled, as PowerShell's own escaping does.
  * A bare word must not start what PowerShell reads as an operator (`@` splats,
  * `$` is a variable, `,` builds an array), hence the short list.
+ *
+ * A word that starts with `-` is bare only when it is a plain flag name
+ * (`--model`, `-m`): both PowerShells (7.6 and 5.1, checked) pass `-m.x`,
+ * `-Dfoo.bar=1` or `-v1.2` to a native program split at the `.`, as `-m`
+ * `.x`. Quoted, every such word arrives whole.
  */
 export function psQuote(word) {
   const s = String(word);
-  return /^[A-Za-z0-9_./:=+-]+$/.test(s) && !/^[-+]{0,2}$/.test(s) ? s : `'${s.replace(/['‘’‚‛]/g, "$&$&")}'`;
+  const bare = /^[A-Za-z0-9_./:=+-]+$/.test(s) && !/^[-+]{0,2}$/.test(s) && (!s.startsWith("-") || /^--?[A-Za-z0-9][A-Za-z0-9-]*$/.test(s));
+  return bare ? s : `'${s.replace(/['‘’‚‛]/g, "$&$&")}'`;
 }
 
 /**

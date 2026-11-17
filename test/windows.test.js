@@ -104,7 +104,9 @@ test("hook payloads with Windows paths still say which agent sent them", () => {
 
 test("psQuote leaves plain words bare and quotes everything PowerShell would read", () => {
   const cases = [
-    ["claude", "claude"], ["--model", "--model"], ["--model=opus", "--model=opus"], ["claude-opus-4.5", "claude-opus-4.5"],
+    ["claude", "claude"], ["--model", "--model"], ["-m", "-m"], ["--no-tools", "--no-tools"], ["claude-opus-4.5", "claude-opus-4.5"],
+    // A dash word that is more than a flag name is quoted: PowerShell splits `-m.x` at the dot.
+    ["--model=opus", "'--model=opus'"], ["--model=gpt-5.1", "'--model=gpt-5.1'"], ["-m.x", "'-m.x'"], ["-Dfoo.bar=1", "'-Dfoo.bar=1'"], ["-v1.2", "'-v1.2'"], ["-x:y", "'-x:y'"],
     ["a b", "'a b'"], ["it's", "'it''s'"], ["x\u2019y", "'x\u2019\u2019y'"], ["\u2018q\u201B", "'\u2018\u2018q\u201B\u201B'"],
     ["$env:X", "'$env:X'"], ["$(calc)", "'$(calc)'"], ["`n", "'`n'"], ["@args", "'@args'"], ["a,b", "'a,b'"], ["a;b", "'a;b'"],
     ["", "''"], ["-", "'-'"], ["--", "'--'"], ["C:\\work\\x", "'C:\\work\\x'"],
@@ -290,6 +292,16 @@ function fakeHc(dir, json) {
 }
 
 for (const shell of POWERSHELLS) {
+  test(`${shell}: every word psJoin writes reaches a native program whole`, () => {
+    const dir = temp("argv");
+    const script = join(dir, "argv.js");
+    writeFileSync(script, "console.log(JSON.stringify(process.argv.slice(2)));\n");
+    const words = ["--model", "--model=gpt-5.1", "-m.x", "-Dfoo.bar=1", "-v1.2", "-x:y", "-a,b", "--effort=high", "claude-opus-4.5", "a b", "it's", "x’y", "$HOME", "`n", "@args"];
+    const r = ps(shell, psJoin([process.execPath, script, ...words]));
+    assert.equal(r.code, 0, r.err);
+    assert.deepEqual(JSON.parse(r.out.trim()), words);
+  });
+
   test(`${shell}: the profile block parses`, () => {
     const r = ps(shell, `$e = $null; [void][System.Management.Automation.Language.Parser]::ParseInput($env:BLOCK, [ref]$null, [ref]$e); if ($e.Count) { $e | ForEach-Object { $_.Message }; exit 1 }`, { BLOCK: pwshBlock(ENGINE) });
     assert.equal(r.code, 0, r.out + r.err);
