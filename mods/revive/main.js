@@ -178,7 +178,7 @@ export default class Revive extends View {
     this.handle.focus();
     // An overlay may not take focus while it is still opening; ask again once it is up.
     cx.timer.after(120, () => this.handle.focus());
-    this.update = updater({ shared, setShared, fetch });
+    this.update = updater({ shared, setShared, fetch, wait: (ms) => new Promise((done) => cx.timer.after(ms, () => done())) });
     // Under `herdr-app check`: draw, but run nothing (no engine, no refresh, no GitHub).
     if (checking()) { this.loading = false; return; }
     this.load(cx, { setup: true });
