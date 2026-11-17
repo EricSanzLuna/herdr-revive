@@ -370,14 +370,16 @@ if (cmd === "get") console.log(JSON.stringify({ address: t, state: "live", pid: 
   foreground: { pid: 4242, argv: ["zsh"], cwd: "/w" }, ...${JSON.stringify(terminal)} }));
 else if (cmd === "send") fs.writeFileSync(${JSON.stringify(join(dir, "sent.json"))}, JSON.stringify({ text: rest[0], from: process.env.HC_TERMINAL_ID ?? null }));
 else if (cmd === "label") fs.appendFileSync(${JSON.stringify(join(dir, "labels.txt"))}, rest.join(" ") + "\\n");
+else if (cmd === "ls") console.log(JSON.stringify({ terminals: [{ address: "t1" }] }));
 `);
   chmodSync(hc, 0o755);
+  const list = () => JSON.parse(execFileSync("node", [ENGINE, "list"], { env: { ...base, REVIVE_HC: hc }, encoding: "utf8" })).entries[0];
   const resume = () => {
     try { execFileSync("node", [ENGINE, "resume", "t1"], { env: { ...base, REVIVE_HC: hc, HC_TERMINAL_ID: "t9" }, stdio: "pipe" }); return null; }
     catch (err) { return String(err.stderr); }
   };
   const read = (name) => (existsSync(join(dir, name)) ? readFileSync(join(dir, name), "utf8") : null);
-  return { work, resume, sent: () => JSON.parse(read("sent.json") ?? "null"), labelled: () => read("labels.txt") ?? "" };
+  return { work, list, resume, sent: () => JSON.parse(read("sent.json") ?? "null"), labelled: () => read("labels.txt") ?? "" };
 }
 
 test("Resume types the command as is, even when run from inside a herdr terminal", () => {
@@ -406,6 +408,32 @@ test("an agent behind a shell launcher is still recognized by its report", () =>
   const fixture = resumeSetup({}, { foreground: { pid: 4243, argv: ["bash", "/tmp/launcher.sh"] }, status: { app: "codex" } });
   assert.match(fixture.resume(), /Codex is already running/);
   assert.equal(fixture.sent(), null);
+});
+
+// #57: the terminal's own command runs the agent (`fish -ic 'claude --resume …'`),
+// so its foreground is the terminal's program, a shell running a command.
+const ownCommand = (line) => ({ foreground: { pid: 4242, argv: ["fish", "-ic", line], cwd: "/w" } });
+
+test("an agent run by the terminal's own command is running, and Resume won't type into it", () => {
+  const fixture = resumeSetup({ "revive.shell": "4242" }, { ...ownCommand(`codex resume ${ID}`), status: { app: "codex" } });
+  assert.equal(fixture.list().live, "codex");
+  assert.equal(fixture.list().state, "running");
+  assert.match(fixture.resume(), /Codex is already running/);
+  assert.equal(fixture.sent(), null);
+});
+
+test("Resume won't type into another agent run by the terminal's own command", () => {
+  const fixture = resumeSetup({}, { ...ownCommand("claude"), status: { app: "claude-code" } });
+  assert.match(fixture.resume(), /busy with Claude Code/);
+  assert.equal(fixture.sent(), null);
+});
+
+test("the terminal's own shell at its prompt ignores a stale agent report", () => {
+  const fixture = resumeSetup({ "revive.shell": "4242" }, { status: { app: "codex" } });
+  assert.equal(fixture.list().live, null);
+  assert.equal(fixture.list().state, "interrupted");
+  assert.equal(fixture.resume(), null);
+  assert.match(fixture.sent().text, new RegExp(`codex resume ${ID}`));
 });
 
 test("Resume by hand refuses a session with needs, keeps it and shows the command", () => {
