@@ -7,6 +7,7 @@ import { join } from "node:path";
 import {
   AGENTS, agentKey, needsOf, carriedFlags, isOneShot, validId, command, shQuote, shJoin, readRecord, labelArgs, clearArgs,
   stateOf, shouldResume, ownShell, isShell, promptShell, idleWrappedShell, resumeScript, attendedFlags, ago, printfLine,
+  canRestore, restores, resumeLine, needsCommand, resumeScriptPwsh,
 } from "../mods/revive/lib/core.js";
 import { POSIX_HARNESS } from "./helpers/platform.js";
 
@@ -135,7 +136,7 @@ test("shell quoting survives the shell", POSIX_HARNESS, () => {
 test("labels read back as a record", () => {
   // `ended` from older versions is read past.
   const rec = readRecord(labels({ agent: "claude", session: ID, cwd: "/w", flags: '["--model","opus"]', shell: 41, at: 5, ended: "other" }));
-  assert.deepEqual(rec, { agent: "claude", session: ID, cwd: "/w", flags: ["--model", "opus"], needs: [], transcript: null, shell: 41, since: null, at: 5, resumed: null, failed: null, auto: true });
+  assert.deepEqual(rec, { agent: "claude", session: ID, cwd: "/w", flags: ["--model", "opus"], needs: [], transcript: null, shell: 41, since: null, at: 5, resumed: null, failed: null, auto: true, restore: false });
   assert.equal(readRecord({}), null);
   assert.equal(readRecord(undefined), null);
   assert.deepEqual(readRecord(labels({ session: ID, flags: "{broken" })).flags, []);
@@ -152,6 +153,37 @@ test("label arguments set, and empty values remove", () => {
   const cleared = clearArgs();
   assert.ok(cleared.includes("revive.session="));
   assert.ok(!cleared.some((a) => a.startsWith("revive.auto")), "the person's auto choice outlives a session");
+  assert.ok(!cleared.some((a) => a.startsWith("revive.restore")), "and so does the restore choice");
+});
+
+// #60: omp's --restore, opt-in per terminal.
+test("only omp can go on with an interrupted turn, and only when the terminal opted in", () => {
+  assert.deepEqual(Object.keys(AGENTS).filter(canRestore), ["omp"]);
+  assert.equal(readRecord(labels({ agent: "omp", session: ID, restore: "on" })).restore, true);
+  for (const v of [undefined, "off", "yes", ""]) assert.equal(readRecord(labels({ agent: "omp", session: ID, restore: v })).restore, false, String(v));
+  const omp = { agent: "omp", session: ID, cwd: "/w", flags: ["--model", "m"] };
+  assert.deepEqual(command(omp), ["omp", "--model", "m", "--resume", ID], "--resume stays the default");
+  assert.deepEqual(command({ ...omp, restore: true }), ["omp", "--model", "m", "--restore", ID]);
+  assert.deepEqual(command({ ...omp, restore: true }, "fork"), ["omp", "--model", "m", "--fork", ID], "a fork is never a restore");
+  assert.equal(restores({ ...omp, restore: true }), true);
+  // Another agent's terminal may carry the label from an omp session before it: it does nothing there.
+  assert.equal(restores({ agent: "claude", session: ID, restore: true }), false);
+  assert.deepEqual(command({ agent: "claude", session: ID, flags: [], restore: true }), ["claude", "--resume", ID]);
+});
+
+test("a restoring resume says so, keeps the rest of the resume's rules, and is quoted the same way", () => {
+  const rec = { agent: "omp", session: ID, cwd: "/w", flags: ["--auto-approve", "--model", "m"], needs: [], restore: true };
+  assert.equal(resumeLine(rec), `cd -- /w && omp --auto-approve --model m --restore ${ID}`, "by hand, as --resume keeps its flags");
+  assert.match(resumeLine(rec, { unattended: true }), new RegExp(`' omp --model m --restore ${ID}$`), "automatically, without the flags that lift approvals");
+  assert.equal(needsCommand({ ...rec, needs: ["PI_CODING_AGENT_DIR"] }), `cd -- /w && omp --auto-approve --model m --restore ${ID}`);
+  for (const script of [resumeScript(rec, "/e"), resumeScriptPwsh(rec, "/e")]) {
+    assert.match(script, /--restore/);
+    assert.match(script, /going on with its unfinished turn \(--restore\): it may run its tools again/);
+    assert.match(script, new RegExp(`(' |& )omp --model m --restore ${ID}`), "without --auto-approve");
+  }
+  for (const script of [resumeScript({ ...rec, restore: false }, "/e"), resumeScriptPwsh({ ...rec, restore: false }, "/e")]) {
+    assert.doesNotMatch(script, /--restore|unfinished turn/);
+  }
 });
 
 test("where a session stands", () => {

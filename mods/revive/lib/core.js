@@ -9,7 +9,7 @@
 
 export const PREFIX = "revive.";
 // `ended` is no longer written; it stays here so clearing removes it from older records.
-export const KEYS = ["agent", "session", "cwd", "flags", "env", "needs", "transcript", "shell", "since", "at", "ended", "resumed", "failed", "auto"];
+export const KEYS = ["agent", "session", "cwd", "flags", "env", "needs", "transcript", "shell", "since", "at", "ended", "resumed", "failed", "auto", "restore"];
 
 /**
  * How an agent's SessionEnd reason is taken: "ignore" (the same process starts
@@ -228,6 +228,11 @@ export const AGENTS = {
     apps: ["omp", "oh-my-pi"],
     argv0Only: true,
     resume: (id, flags) => ["omp", ...flags, "--resume", id],
+    // Opt-in per terminal (`revive.mjs restore T on`): reopens the session as
+    // --resume does, then goes on with the turn and the subagents its last
+    // process left unfinished, running again a batch of tool calls that was
+    // cut off. Since omp 18.16; interactive only, no prompt.
+    restore: (id, flags) => ["omp", ...flags, "--restore", id],
     fork: (id, flags) => ["omp", ...flags, "--fork", id],
     env: ["PI_CODING_AGENT_DIR"],
     findIn: ["--session-dir"],
@@ -429,6 +434,12 @@ export function agentKey(app, argv = []) {
   }
   return null;
 }
+
+/** Whether the agent can go on with an interrupted turn when it resumes (omp's --restore). */
+export const canRestore = (key) => typeof AGENTS[key]?.restore === "function";
+
+/** Whether this record's resume goes on with the interrupted turn: the terminal opted in, and the agent can. */
+export const restores = (rec) => Boolean(rec?.restore) && canRestore(rec.agent);
 
 /** Whether the agent can copy a session into a new one. */
 export const canFork = (key) => typeof AGENTS[key]?.fork === "function";
@@ -669,6 +680,7 @@ export const shortId = (id) => (id ? String(id).slice(0, 8) : "");
  */
 export function command(rec, kind = "resume", { unattended = false } = {}) {
   const agent = AGENTS[rec?.agent];
+  if (kind === "resume" && restores(rec)) kind = "restore";
   if (!agent || typeof agent[kind] !== "function" || !validId(rec.session)) return null;
   const flags = safeFlags(rec.agent, rec.flags ?? []);
   // No variables: a resume runs with the shell's own (see `needs`).
@@ -828,6 +840,7 @@ export function readRecord(labels) {
     resumed: num(get("resumed")),
     failed: num(get("failed")),
     auto: get("auto") !== "off",
+    restore: get("restore") === "on",
   };
 }
 
@@ -844,8 +857,11 @@ export function labelArgs(fields) {
 export const resumedArgs = ({ pid, since, now = Date.now() }) =>
   labelArgs({ shell: pid, since, resumed: now, failed: null, ended: null });
 
-/** Every Revive label, removed. `auto` stays: it is the person's choice for that terminal. */
-export const clearArgs = () => labelArgs(Object.fromEntries(KEYS.filter((k) => k !== "auto").map((k) => [k, null])));
+/** The labels that are the person's choice for that terminal, not part of a session. */
+const CHOICES = ["auto", "restore"];
+
+/** Every Revive label, removed. `auto` and `restore` stay: they are the person's choice for that terminal. */
+export const clearArgs = () => labelArgs(Object.fromEntries(KEYS.filter((k) => !CHOICES.includes(k)).map((k) => [k, null])));
 
 /**
  * Where a remembered session stands, given its terminal now:
@@ -922,6 +938,9 @@ export function resumeLine(rec, { unattended = false, dialect = "posix" } = {}) 
  * Nobody is watching it start, so the flags that lift approvals or the
  * sandbox are left out, and the note says which.
  */
+/** Under the resume note when it restores: it goes on with work, not only the conversation. */
+const RESTORE_NOTE = "  and going on with its unfinished turn (--restore): it may run its tools again";
+
 export function resumeScript(rec, engine) {
   const line = resumeLine(rec, { unattended: true });
   if (!line) return "";
@@ -933,6 +952,7 @@ export function resumeScript(rec, engine) {
     ["accent", "↻ Revive"], [null, "  resuming "], ["strong", name], [null, ` session ${shortId(rec.session)}`],
     ["dim", " · REVIVE_AUTO=0 skips this"],
   ])];
+  if (restores(rec)) notes.push(printfLine([["caution", RESTORE_NOTE]]));
   if (dropped.length) {
     notes.push(printfLine([["caution", `  without ${dropped.join(", ")} (only a resume from the Revive dialog keeps ${dropped.length > 1 ? "them" : "it"})`]]));
   }
@@ -1016,6 +1036,7 @@ export function resumeScriptPwsh(rec, engine) {
     ["accent", "↻ Revive"], [null, "  resuming "], ["strong", name], [null, ` session ${shortId(rec.session)}`],
     ["dim", " · $env:REVIVE_AUTO = 0 skips this"],
   ])];
+  if (restores(rec)) notes.push(psLine([["caution", RESTORE_NOTE]]));
   if (dropped.length) {
     notes.push(psLine([["caution", `  without ${dropped.join(", ")} (only a resume from the Revive dialog keeps ${dropped.length > 1 ? "them" : "it"})`]]));
   }

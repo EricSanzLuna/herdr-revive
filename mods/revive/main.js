@@ -10,7 +10,7 @@ import { View, div, image, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { exec, run, theme, focused, appHome, home, props, closeOverlay, notify, shared, setShared } from "herdr";
 import * as herdr from "herdr";
-import { AGENTS, canFork, command, shortId, ago, unresumable, needsCommand, cameBack } from "./lib/core.js";
+import { AGENTS, canFork, canRestore, command, shortId, ago, unresumable, needsCommand, cameBack } from "./lib/core.js";
 import { updater, VERSION, PROMPT, RELEASES } from "./lib/update.js";
 
 /**
@@ -313,6 +313,17 @@ export default class Revive extends View {
     });
   }
 
+  /** omp only: resume with --restore, which goes on with the unfinished turn. */
+  setRestore(entry, on, cx) {
+    this.note = null;
+    cx.spawn(async (cx) => {
+      const r = await engine(["restore", entry.address, on ? "on" : "off"]);
+      if (!r.ok) this.note = { level: "error", text: r.error };
+      else if (on) this.note = { level: "info", text: "omp will go on with its unfinished turn when this session comes back, and may run its tools again." };
+      this.load(cx);
+    });
+  }
+
   install(cx) {
     if (this.busy) return;
     this.busy = true;
@@ -514,6 +525,9 @@ export default class Revive extends View {
         .child(div().truncate().text_size(11.5).text_color(t.dim)
           .child([entry.where ?? entry.address, rec.resumed ? `resumed ${ago(rec.resumed)}` : null].filter(Boolean).join(" · "))))
       .child(status(t, state))
+      .when(!entry.unrecorded && canRestore(rec.agent), (el) => el.child(h_flex().flex_none().gap(8).items_center()
+        .child(div().text_size(11.5).text_color(t.dim).child("Continue"))
+        .child(toggle(t, `restore-${i}`, Boolean(rec.restore), (_e, cx) => this.setRestore(entry, !rec.restore, cx)))))
       .when(!entry.unrecorded, (el) => el.child(h_flex().flex_none().gap(8).items_center()
         .child(div().text_size(11.5).text_color(t.dim).child("Auto"))
         .child(toggle(t, `auto-${i}`, Boolean(rec.auto), (_e, cx) => this.setAuto(entry, !rec.auto, cx)))))

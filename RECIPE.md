@@ -133,8 +133,9 @@ latest release* when a newer release is out. To do it:
     - **NEEDS YOU**, with a count in an `ansi3` pill: other terminals whose session is
       lost, interrupted or failed. Each row (54px, 10px radius, `raised` with a
       `border`, `hover` on hover, 4px apart): the agent's tile (30px), its name (13px
-      medium) and short id, *space / tab · resumed 3m ago* in `dim`, the state, **Auto**
-      with a switch, and a small solid **Resume**. Clicking the row closes the dialog and
+      medium) and short id, *space / tab · resumed 3m ago* in `dim`, the state, for omp
+      **Continue** with a switch (`restore`, see below), **Auto** with a switch, and a
+      small solid **Resume**. Clicking the row closes the dialog and
       focuses that terminal.
     - **OTHER SESSIONS**: the rest, the same rows (50px) without the fill, border or
       **Resume**, 2px apart. A session found through its pid but not remembered says
@@ -171,7 +172,9 @@ latest release* when a newer release is out. To do it:
   the terminal's theme): `↻ Revive` in bold blue, `  resuming `, the agent's name in
   bold, ` session 9e458eb4`, and ` · REVIVE_AUTO=0 skips this` dim. When flags that lift
   approvals or the sandbox were left out, a second line in yellow: `  without
-  --dangerously-skip-permissions (only a resume from the Revive dialog keeps it)`.
+  --dangerously-skip-permissions (only a resume from the Revive dialog keeps it)`. When
+  omp comes back with `--restore`, a line in yellow: `  and going on with its unfinished
+  turn (--restore): it may run its tools again`.
   Both are `printfLine` (`lib/core.js`): the texts are `printf` arguments, never its
   format. In PowerShell they are `psLine`: each text a single-quoted string, written
   with `[Console]::Out.WriteLine` while the console's output encoding is UTF-8 (so `↻`
@@ -211,6 +214,7 @@ A session is remembered as labels on its herdr-core terminal:
 | `revive.resumed` | When Revive last resumed it (ms); kept until a new session starts |
 | `revive.failed` | When a resume gave up within 15 seconds (ms) |
 | `revive.auto` | `off` turns automatic resume off for this terminal; kept across sessions |
+| `revive.restore` | `on`: omp only, resume with `--restore` (go on with the unfinished turn) instead of `--resume`; off unless set, ignored for other agents, kept across sessions. Set with `revive.mjs restore T on\|off`, which refuses `on` for a terminal whose record is another agent's |
 
 Labels are kept by herdr-core across its restarts and go away with the terminal.
 
@@ -230,7 +234,7 @@ One entry each in `AGENTS` (`lib/core.js`), one hook target in `HOOK_TARGETS`
 | Claude Code | `claude`; report `claude-code` | `claude … --resume <id>` | `claude … --resume <id> --fork-session` | `~/.claude/settings.json` | `session_id` | `--dangerously-skip-permissions`, `--allow-dangerously-skip-permissions`, `--permission-mode`, `--model`, `--agent` |
 | Codex | `codex`; report `codex` | `codex resume … <id>` | `codex fork … <id>` | `~/.codex/hooks.json`, groups with `"matcher": ""` | `session_id` | `--no-daemon`, `--dangerously-bypass-approvals-and-sandbox`, `--yolo`, `--full-auto`, `--approve-for-me`, `--search`, `-m`/`--model`, `-s`/`--sandbox`, `-a`/`--ask-for-approval`, `-p`/`--profile` (a profile name only, not a path) |
 | pi | `pi` as the first word only (pi renames its process `pi`); report `pi` | `pi … --session <id>` | `pi … --fork <id>` | extension linked into `~/.pi/agent/extensions/` (`$PI_CODING_AGENT_DIR/extensions/`) | `session_id` from the extension | `--provider`, `--model`, `--models`, `--thinking`, `-t`/`--tools`, `-xt`/`--exclude-tools`, `-nt`/`--no-tools`, `-nbt`/`--no-builtin-tools`, `-ne`/`--no-extensions`, `--no-mcp`, `-ns`/`--no-skills`, `-nc`/`--no-context-files`, `-a`/`--approve`, `-na`/`--no-approve`, `--offline` |
-| omp | `omp` as the first word only (omp renames its process `omp`); report `omp`, `oh-my-pi` | `omp … --resume <id>` | `omp … --fork <id>` | extension linked into `~/.omp/agent/extensions/` (always that folder: a `PI_CODING_AGENT_DIR` is taken to be pi's) | `session_id` from the extension | `--model`, `--smol`, `--slow`, `--plan`, `--provider`, `--models`, `--thinking`, `--service-tier`, `--tools`, `--skills`, `--no-tools`, `--no-lsp`, `--no-pty`, `--no-extensions`, `--no-skills`, `--no-rules`, `--no-context-files`, `--no-title`, `--hide-thinking`, `--profile` (a name only), `--approval-mode`, `--auto-approve`, `--plan-yolo` |
+| omp | `omp` as the first word only (omp renames its process `omp`); report `omp`, `oh-my-pi` | `omp … --resume <id>`; `omp … --restore <id>` with `revive.restore=on` | `omp … --fork <id>` | extension linked into `~/.omp/agent/extensions/` (always that folder: a `PI_CODING_AGENT_DIR` is taken to be pi's) | `session_id` from the extension | `--model`, `--smol`, `--slow`, `--plan`, `--provider`, `--models`, `--thinking`, `--service-tier`, `--tools`, `--skills`, `--no-tools`, `--no-lsp`, `--no-pty`, `--no-extensions`, `--no-skills`, `--no-rules`, `--no-context-files`, `--no-title`, `--hide-thinking`, `--profile` (a name only), `--approval-mode`, `--auto-approve`, `--plan-yolo` |
 | Droid | `droid`; report `droid` | `droid … --resume <id>` | `droid … --fork <id>` | `~/.factory/hooks.json` (event map, no `hooks` wrapper) if it exists, else `hooks` in `~/.factory/settings.json`; command `… hook --agent droid` | `session_id` | `--auto`, `--use-spec`, `--disable-builtin-skills` (interactive flags only: `--skip-permissions-unsafe`, `-m` and the reasoning/tool flags are `droid exec` only, and interactive droid reads them as the prompt) |
 | Cursor | `cursor-agent`, or `agent`/`node`/`index.js` under a `cursor` or `cursor-agent` folder; report `cursor`, `cursor-agent` | `cursor-agent … --resume <id>` | none | `~/.cursor/hooks.json`: `{"version": 1, "hooks": {"sessionStart": [{"command": …}], "sessionEnd": […]}}`, no timeout; command `… hook --agent cursor` | `conversation_id`; folder from `workspace_roots[0]` | `-f`/`--force`, `--yolo`, `--model` (it has no `-m`), `--sandbox`, `--mode`, `--plan` |
 | Copilot CLI | `copilot` as the first word, or the second after `node`/`bun`/`deno` (never `gh copilot`); report `copilot` | `copilot … --resume <id>` | none (`/fork` inside only) | its own file `~/.copilot/hooks/herdr-revive.json` (`$COPILOT_HOME/hooks/`): `{"version": 1, "hooks": {"SessionStart": [{"type": "command", "bash": …, "timeoutSec": 10}], "SessionEnd": […]}}`, deleted whole on uninstall; command `… hook --agent copilot` | `session_id` | `--model`, `--mode`, `--plan`, `--autopilot`, `--reasoning-effort`, `--max-autopilot-continues`, `--agent` (a name only), `--allow-all`/`--yolo`, `--allow-all-tools`, `--allow-all-paths`, `--allow-all-urls`, `--allow-tool`, `--deny-tool`, `--allow-url`, `--deny-url`, `--available-tools`, `--excluded-tools`, `--no-ask-user`, `--experimental`, `--no-experimental`, `--disable-builtin-mcps`, `--disable-mcp-server`, `--no-custom-instructions`, `--disallow-temp-dir`, `--screen-reader`, `--plain-diff`, `--no-mouse` |
