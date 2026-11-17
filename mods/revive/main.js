@@ -509,7 +509,7 @@ export default class Revive extends View {
       .child(hint(t, why));
   }
 
-  row(t, entry, i) {
+  row(t, entry, i, continueCol = false) {
     const { rec, state } = entry;
     const agent = AGENTS[rec.agent];
     const needs = NEEDS_YOU.has(state);
@@ -528,6 +528,9 @@ export default class Revive extends View {
       .when(!entry.unrecorded && canRestore(rec.agent), (el) => el.child(h_flex().flex_none().gap(8).items_center()
         .child(div().text_size(11.5).text_color(t.dim).child("Continue"))
         .child(toggle(t, `restore-${i}`, Boolean(rec.restore), (_e, cx) => this.setRestore(entry, !rec.restore, cx)))))
+      .when(continueCol && !entry.unrecorded && !canRestore(rec.agent), (el) => el.child(h_flex().flex_none().gap(8).items_center().invisible()
+        .child(div().text_size(11.5).child("Continue"))
+        .child(div().flex_none().w(32).h(18))))
       .when(!entry.unrecorded, (el) => el.child(h_flex().flex_none().gap(8).items_center()
         .child(div().text_size(11.5).text_color(t.dim).child("Auto"))
         .child(toggle(t, `auto-${i}`, Boolean(rec.auto), (_e, cx) => this.setAuto(entry, !rec.auto, cx)))))
@@ -600,6 +603,8 @@ export default class Revive extends View {
     const latest = this.update?.available() ?? null;
     const back = cameBack(this.entries, { seen: shared(CAME_BACK_SEEN) });
     const listH = listMaxH((this.note ? NOTE_H : 0) + (latest ? UPDATE_H : 0) + (back.list.length ? CAME_BACK_H : 0));
+    // When an omp row shows Continue, the other rows keep its room, so the states line up.
+    const continueCol = [...needs, ...rest].some((e) => !e.unrecorded && canRestore(e.rec.agent));
     return v_flex().id("revive").track_focus(this.handle).on_key_down((e, cx) => this.key(e, cx))
       .w_full().bg(t.popover)
       .child(this.header(t))
@@ -612,9 +617,9 @@ export default class Revive extends View {
           .child(section(t, "FOCUSED TERMINAL"))
           .child(this.focusedCard(t))
           .when(needs.length > 0, (b) => b.child(section(t, "NEEDS YOU", needs.length, t.ansi3))
-            .child(v_flex().gap(4).children(needs.map((e, i) => this.row(t, e, `n${i}`)))))
+            .child(v_flex().gap(4).children(needs.map((e, i) => this.row(t, e, `n${i}`, continueCol)))))
           .when(rest.length > 0, (b) => b.child(section(t, "OTHER SESSIONS"))
-            .child(v_flex().gap(2).children(rest.map((e, i) => this.row(t, e, `r${i}`))))))))
+            .child(v_flex().gap(2).children(rest.map((e, i) => this.row(t, e, `r${i}`, continueCol))))))))
       .when(Boolean(this.note), (el) => el.child(div().flex_none().mx(20).mb(12).px(10).py(8).rounded(8).text_size(11.5)
         .bg(alpha(this.note.level === "error" ? t.ansi1 : t.foreground, "14"))
         .text_color(this.note.level === "error" ? t.ansi1 : t.muted).child(this.note.text)))
