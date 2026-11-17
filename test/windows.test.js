@@ -16,7 +16,7 @@ import {
   needsCommand, needsHint, notResumingLine, splitCommandLine, parseWinProcesses, readRecord, labelArgs,
 } from "../mods/revive/lib/core.js";
 import { engineWord, hasCopilotHooks, pwshBlock, shellBlock, vetRecord, withCopilotHooks, withShellBlock, winOwners, winProcesses } from "../mods/revive/revive.mjs";
-import { claudeStartFolder, agentDirs } from "../mods/revive/lib/sessions.js";
+import { claudeProject, claudeStartFolder, agentDirs } from "../mods/revive/lib/sessions.js";
 import { WINDOWS, WINDOWS_ONLY } from "./helpers/platform.js";
 
 const ENGINE = resolve("mods/revive/revive.mjs");
@@ -244,6 +244,24 @@ test("Copilot's hooks on Windows also have the powershell command Copilot runs t
   assert.equal(withCopilotHooks(old, { win: true }).hooks.SessionStart.filter((h) => h.powershell?.includes("revive.mjs")).length, 1);
   const removed = withCopilotHooks(doc, { remove: true, win: true });
   assert.deepEqual(removed.hooks.SessionStart, [{ type: "command", powershell: "theirs.ps1", timeoutSec: 5 }]);
+});
+
+// A 227-character Windows folder, and the project name Claude Code 2.1.325 gave it on Windows 11.
+const LONG_WIN = "C:\\workspace\\tmp\\" + "a".repeat(100) + "\\" + "b".repeat(100) + "\\café.app";
+const LONG_WIN_PROJECT = "C--workspace-tmp-" + "a".repeat(100) + "-" + "b".repeat(82) + "-ff8uth";
+
+test("a Windows folder past 200 characters is named as Claude Code names it", () => {
+  assert.equal(claudeProject(LONG_WIN), LONG_WIN_PROJECT);
+});
+
+test("Claude Code's start folder is found for a Windows folder past 200 characters", WINDOWS_ONLY, () => {
+  const home = temp("long");
+  const store = join(home, ".claude", "projects", LONG_WIN_PROJECT);
+  mkdirSync(store, { recursive: true });
+  writeFileSync(join(store, `${ID}.jsonl`), `${JSON.stringify({ type: "user", cwd: LONG_WIN })}\n`);
+  const dirs = agentDirs({ USERPROFILE: home });
+  assert.deepEqual(claudeStartFolder({ dirs, session: ID, cwd: LONG_WIN }), { cwd: LONG_WIN });
+  assert.deepEqual(claudeStartFolder({ dirs, session: ID, cwd: "C:\\elsewhere" }), { cwd: LONG_WIN }, "moved");
 });
 
 // ── the process table ───────────────────────────────────────────────────────
