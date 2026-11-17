@@ -480,8 +480,11 @@ record and resumed the session.
   never touch the network.
 - The result is kept in Herdr's shared state under `revive.update` (`checked`, `latest:
   {tag, url}`, `dismissed`, `off`, `repo`), so it lasts across restarts and every copy of
-  the dialog sees it. The time is saved before asking, so two dialogs don't both ask. A
-  result saved for another repository counts as never checked; `off` holds for any.
+  the dialog sees it. Nothing is saved before asking: Herdr may make a view and drop it
+  at once, and a request cut short with it must not count as asked (two dialogs open
+  together may both ask, once a day). The request has 15 seconds (Herdr's `cx.timer`),
+  then counts as failed. A result saved for another repository counts as never checked;
+  `off` holds for any.
 - A release is offered when its tag (`v1.2.3`) is newer than `VERSION` in
   `lib/update.js`, which must equal `package.json`'s and `mod.json`'s version (a test
   checks it). A tag of another shape offers nothing until the next day's check; a
