@@ -15,7 +15,7 @@ import {
   agentKey, hookPayload, hookOwner, isShell, isPowerShell, promptShell, ownShell, idleWrappedShell, psQuote, psJoin, resumeLine, resumeScriptPwsh,
   needsCommand, needsHint, notResumingLine, splitCommandLine, parseWinProcesses, readRecord, labelArgs,
 } from "../mods/revive/lib/core.js";
-import { engineWord, pwshBlock, shellBlock, vetRecord, withShellBlock, winOwners, winProcesses } from "../mods/revive/revive.mjs";
+import { engineWord, hasCopilotHooks, pwshBlock, shellBlock, vetRecord, withCopilotHooks, withShellBlock, winOwners, winProcesses } from "../mods/revive/revive.mjs";
 import { claudeStartFolder, agentDirs } from "../mods/revive/lib/sessions.js";
 import { WINDOWS, WINDOWS_ONLY } from "./helpers/platform.js";
 
@@ -225,6 +225,23 @@ test("Claude Code's start folder is read from a transcript that names a Windows 
   writeFileSync(join(store, `${ID}.jsonl`), `${JSON.stringify({ type: "user", cwd })}\n`);
   assert.deepEqual(claudeStartFolder({ dirs: agentDirs({ USERPROFILE: home }), session: ID, cwd: "C:\\elsewhere" }), { cwd });
   assert.equal(agentDirs({ USERPROFILE: "C:\\Users\\me", HOME: "/c/Users/me" }).claude, "C:\\Users\\me\\.claude", "USERPROFILE, not Git Bash's HOME");
+});
+
+test("Copilot's hooks on Windows also have the powershell command Copilot runs there", () => {
+  const doc = withCopilotHooks({ hooks: { SessionStart: [{ type: "command", powershell: "theirs.ps1", timeoutSec: 5 }] } }, { win: true });
+  const ours = doc.hooks.SessionStart.at(-1);
+  assert.match(ours.powershell, /^node (\S+|'[^']*') hook --agent copilot$/);
+  assert.ok(ours.powershell.includes(ENGINE));
+  assert.match(ours.bash, /revive\.mjs.* hook --agent copilot$/);
+  assert.equal(doc.hooks.SessionStart[0].powershell, "theirs.ps1", "someone else's entry is kept");
+  assert.ok(hasCopilotHooks(doc));
+  assert.deepEqual(withCopilotHooks(doc, { win: true }), doc, "nothing to change the second time");
+  // An entry written before the powershell command existed is brought up to date.
+  const old = withCopilotHooks({}, { win: false });
+  assert.equal(old.hooks.SessionStart[0].powershell, undefined);
+  assert.equal(withCopilotHooks(old, { win: true }).hooks.SessionStart.filter((h) => h.powershell?.includes("revive.mjs")).length, 1);
+  const removed = withCopilotHooks(doc, { remove: true, win: true });
+  assert.deepEqual(removed.hooks.SessionStart, [{ type: "command", powershell: "theirs.ps1", timeoutSec: 5 }]);
 });
 
 // ── the process table ───────────────────────────────────────────────────────

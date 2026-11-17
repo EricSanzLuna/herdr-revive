@@ -287,7 +287,8 @@ const settleMs = () => {
 async function settleLater(t, pid, session, agentPid) {
   const args = [t, session, String(pid), String(agentPid)];
   if (!settleMs()) return settle(args);
-  spawn(process.execPath, [ENGINE, "settle", ...args], { detached: true, stdio: "ignore" }).unref();
+  // windowsHide: on Windows a detached process gets a console window of its own otherwise.
+  spawn(process.execPath, [ENGINE, "settle", ...args], { detached: true, stdio: "ignore", windowsHide: true }).unref();
 }
 
 const isPid = (s) => /^[1-9][0-9]*$/.test(s ?? "");
@@ -394,7 +395,7 @@ const loadRecord = (labels) => vetRecord(readRecord(labels));
 // ── the shell ───────────────────────────────────────────────────────────────
 
 const claudeDir = (env = process.env) => env.CLAUDE_CONFIG_DIR || join(homedir(), ".claude");
-const copilotDir = () => agentDirs({ ...process.env, HOME: homedir() }).copilot;
+const copilotDir = () => agentDirs({ ...process.env, HOME: homedir(), USERPROFILE: homedir() }).copilot;
 
 /**
  * Claude Code writes a session's transcript only once it has a message, so a
@@ -1001,18 +1002,25 @@ export const hasCursorHooks = (doc) => CURSOR_EVENTS.every((e) => (doc?.hooks?.[
  * own (Copilot reads every `*.json` in that folder): `{ version: 1, hooks:
  * { SessionStart: [{ type: "command", bash, timeoutSec }], … } }`, flat
  * entries with no groups. Entries of anyone else's in it are kept.
+ *
+ * On Windows Copilot runs an entry's `powershell` command and ignores its
+ * `bash` one (checked with copilot 1.0.112), so there the entry has both. The
+ * engine is a single-quoted PowerShell word (`psQuote`), so a `$` or a
+ * backtick in its path is never expanded.
  */
-const isOursCopilot = (h) => isOurs({ command: h?.bash ?? h?.command });
-export function withCopilotHooks(doc, { remove = false } = {}) {
+const isOursCopilot = (h) => [h?.bash, h?.powershell, h?.command].some((command) => isOurs({ command }));
+const copilotPowershell = () => `node ${psQuote(ENGINE)} hook --agent copilot`;
+export function withCopilotHooks(doc, { remove = false, win = IS_WIN } = {}) {
   const out = structuredClone(doc ?? {});
   if (!remove) out.version ??= 1;
   out.hooks ??= {};
   const bash = hookCommand("copilot");
+  const powershell = win ? copilotPowershell() : undefined;
   for (const event of EVENTS) {
     const ours = (out.hooks[event] ?? []).filter(isOursCopilot);
-    if (!remove && ours.length === 1 && ours[0].bash === bash && ours[0].timeoutSec === 10) continue;
+    if (!remove && ours.length === 1 && ours[0].bash === bash && ours[0].powershell === powershell && ours[0].timeoutSec === 10) continue;
     const list = (out.hooks[event] ?? []).filter((h) => !isOursCopilot(h));
-    if (!remove) list.push({ type: "command", bash, timeoutSec: 10 });
+    if (!remove) list.push({ type: "command", bash, ...(powershell ? { powershell } : {}), timeoutSec: 10 });
     if (list.length) out.hooks[event] = list;
     else delete out.hooks[event];
   }
