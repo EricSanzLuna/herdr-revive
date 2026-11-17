@@ -108,14 +108,15 @@ async function listTerminals() {
 /**
  * The agent in the terminal's foreground, or null. By its command line, or,
  * for an agent behind a wrapper with another name (`node …/cli.mjs`), by its
- * own report, which only counts while something other than the terminal's
- * shell is in the foreground: a report outlives the agent that sent it. A
- * shell at its own prompt ignores the report; one running a script keeps it.
+ * own report, which only counts while something other than a shell at its
+ * prompt is in the foreground: a report outlives the agent that sent it. A
+ * shell running a script or a command keeps it, the terminal's own program
+ * too (`fish -ic 'claude --resume …'` runs the agent as its child).
  */
 function liveAgent(t) {
   const fg = t.foreground;
   if (!fg?.argv) return null;
-  return agentKey(null, fg.argv) ?? (fg.pid && fg.pid !== t.pid && !promptShell(fg.argv) ? agentKey(t.status?.app) : null);
+  return agentKey(null, fg.argv) ?? (fg.pid && !promptShell(fg.argv) ? agentKey(t.status?.app) : null);
 }
 
 // ── hooks ───────────────────────────────────────────────────────────────────
@@ -567,8 +568,12 @@ async function resume(args) {
   const terminal = await getTerminal(t);
   const rec = loadRecord(terminal.labels);
   if (!rec) throw new Error(`${t} has no remembered session.`);
+  // Herdr can show a killed agent as the foreground for a moment on Windows.
   const fgGone = IS_WIN && terminal.foreground?.pid ? foregroundGone(terminal, await processes([terminal.foreground.pid])) : false;
-  if (!fgGone && liveAgent(terminal) === rec.agent) throw new Error(`${AGENTS[rec.agent].name} is already running in ${t}.`);
+  const live = fgGone ? null : liveAgent(terminal);
+  if (live === rec.agent) throw new Error(`${AGENTS[rec.agent].name} is already running in ${t}.`);
+  // Another agent, even one the terminal's own program runs: the line would be its next message.
+  if (live) throw new Error(`${t} is busy with ${AGENTS[live].name}. Quit it first.`);
   const fg = terminal.foreground;
   if (!fgGone && fg?.pid && terminal.pid && fg.pid !== terminal.pid) {
     // A wrapper's child shell is the terminal's shell too, just as in check.
