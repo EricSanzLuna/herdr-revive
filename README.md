@@ -454,7 +454,9 @@ Checked by hand on Windows 11 with herdr-app 0.1.16, herdr-core 0.1.21, Node 24,
 7.6 and Windows PowerShell 5.1: Claude Code 2.1.325 and pi 1.4.0 are recorded, forgotten on
 `/exit`, and come back with their conversation after a core restart and after a real reboot.
 Copilot CLI 1.0.112, run as winget's `copilot.exe` and as npm's (through its node loader),
-was checked the same way after a core restart, not yet after a real reboot. Codex, omp,
+was checked the same way after a core restart, and winget's after a real reboot. A resumed
+Copilot first asks whether you trust the folder, unless you chose *Yes, and remember this
+folder* before; the conversation is behind that question. Codex, omp,
 Droid and Cursor are covered by unit tests only.
 
 - The shell is PowerShell, the one herdr-core starts there. A Herdr shell set to Git Bash,
