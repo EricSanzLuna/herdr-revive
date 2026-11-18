@@ -380,7 +380,7 @@ else if (cmd === "ls") console.log(JSON.stringify({ terminals: [{ address: "t1" 
     catch (err) { return String(err.stderr); }
   };
   const read = (name) => (existsSync(join(dir, name)) ? readFileSync(join(dir, name), "utf8") : null);
-  return { work, list, resume, sent: () => JSON.parse(read("sent.json") ?? "null"), labelled: () => read("labels.txt") ?? "" };
+  return { work, hc, list, resume, sent: () => JSON.parse(read("sent.json") ?? "null"), labelled: () => read("labels.txt") ?? "" };
 }
 
 test("Resume types the command as is, even when run from inside a herdr terminal", POSIX_HARNESS, () => {
@@ -435,6 +435,28 @@ test("the terminal's own shell at its prompt ignores a stale agent report", POSI
   assert.equal(fixture.list().state, "interrupted");
   assert.equal(fixture.resume(), null);
   assert.match(fixture.sent().text, new RegExp(`codex resume ${ID}`));
+});
+
+test("restore turns omp's --restore on and off for a terminal, and refuses another agent", POSIX_HARNESS, () => {
+  const restore = (fixture, value) => {
+    try { execFileSync("node", [ENGINE, "restore", "t1", value], { env: { ...base, REVIVE_HC: fixture.hc }, stdio: "pipe" }); return null; }
+    catch (err) { return String(err.stderr); }
+  };
+  const omp = resumeSetup({ "revive.agent": "omp" });
+  assert.equal(restore(omp, "on"), null);
+  assert.equal(restore(omp, "off"), null);
+  assert.deepEqual(omp.labelled().trim().split("\n"), ["revive.restore=on", "revive.restore="]);
+  assert.match(restore(omp, "maybe"), /usage: revive.mjs restore T on\|off/);
+  const codex = resumeSetup();
+  assert.match(restore(codex, "on"), /Codex can't go on with an interrupted turn; only omp can/);
+  assert.equal(restore(codex, "off"), null, "turning it off is always allowed");
+  assert.doesNotMatch(codex.labelled(), /restore=on/);
+});
+
+test("Resume by hand sends --restore for an omp terminal that opted in", POSIX_HARNESS, () => {
+  const { work, resume, sent } = resumeSetup({ "revive.agent": "omp", "revive.restore": "on" });
+  assert.equal(resume(), null);
+  assert.equal(sent().text, `cd -- ${work} && omp --restore ${ID}`);
 });
 
 test("Resume by hand refuses a session with needs, keeps it and shows the command", POSIX_HARNESS, () => {

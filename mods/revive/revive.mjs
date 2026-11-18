@@ -12,6 +12,8 @@
 //   revive.mjs list [--focus T]   every remembered session, as JSON, for the dialog
 //   revive.mjs resume T           resume T's session in T's shell
 //   revive.mjs auto T on|off      allow or stop automatic resume for T
+//   revive.mjs restore T on|off   omp only: resume T's session with --restore, which goes
+//                                 on with its unfinished turn, or with --resume (the default)
 //   revive.mjs adopt [T] [--dry-run]
 //                                 remember the running Claude Code sessions
 //                                 nobody recorded (started before Revive was
@@ -33,7 +35,7 @@ import { promisify } from "node:util";
 import {
   AGENTS, agentKey, carriedFlags, safeFlags, hookOwner, hookPayload, endAction, isOneShot, readRecord, labelArgs, clearArgs, resumedArgs,
   stateOf, shouldResume, ownShell, promptShell, idleWrappedShell, resumeScript, resumeLine, shQuote, shJoin, validId, needsOf, shortId, needsHint, unresumable,
-  isPowerShell, resumeScriptPwsh, notResumingLine, parseWinProcesses, psQuote,
+  isPowerShell, resumeScriptPwsh, notResumingLine, parseWinProcesses, psQuote, canRestore,
 } from "./lib/core.js";
 import { agentDirs, claudeProject, claudeStartFolder, findSession } from "./lib/sessions.js";
 
@@ -604,6 +606,21 @@ async function resume(args) {
 async function auto(args) {
   const [t, value] = args;
   await label(t, labelArgs({ auto: value === "off" ? "off" : null }));
+}
+
+/**
+ * Whether T's resume goes on with the interrupted turn (omp's --restore). Off
+ * unless asked for: the turn may run its tools again. Like `auto`, the choice
+ * stays with the terminal for its next sessions.
+ */
+async function restore(args) {
+  const [t, value] = args;
+  if (!t || !["on", "off"].includes(value)) throw new Error("usage: revive.mjs restore T on|off");
+  if (value === "on") {
+    const rec = loadRecord((await getTerminal(t)).labels);
+    if (rec && !canRestore(rec.agent)) throw new Error(`${AGENTS[rec.agent]?.name ?? rec.agent} can't go on with an interrupted turn; only omp can.`);
+  }
+  await label(t, labelArgs({ restore: value === "on" ? "on" : null }));
 }
 
 // ── adopt ───────────────────────────────────────────────────────────────────
@@ -1348,6 +1365,7 @@ const COMMANDS = {
   list: { run: list },
   resume: { run: resume },
   auto: { run: auto },
+  restore: { run: restore },
   adopt: { run: adopt },
   install: { run: (a) => install(a) },
   uninstall: { run: (a) => install(a, true) },

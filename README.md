@@ -68,6 +68,9 @@ What "experimental" means for each one is under [Limits](#limits).
   [Limits](#limits)).
 - **Per terminal.** Turn automatic resume off for one terminal in the dialog, or for a
   whole shell with `REVIVE_AUTO=0`.
+- **Pick up the work (omp, opt-in).** Turn on **Continue** for an omp terminal, and its
+  session comes back with `omp --restore` instead of `--resume`: omp goes on with the turn
+  and the subagents it left unfinished (see [pi and omp](#pi-and-omp)).
 - **Nothing to run.** No background process. Sessions are remembered as labels on their
   herdr-core terminals, so the record lives exactly as long as the terminal does.
 
@@ -329,6 +332,7 @@ To look inside:
 ```sh
 hc get t3 --json | jq '.labels | with_entries(select(.key | startswith("revive.")))'
 hc label t3 revive.auto=off      # no automatic resume for t3
+node revive.mjs restore t3 on    # omp only: come back with --restore (see pi and omp)
 REVIVE_DEBUG=1 zsh               # say why a shell did or didn't resume
 ```
 
@@ -402,6 +406,16 @@ flags, `--session`/`--fork` or how it ends on a signal.
 - omp also reads `PI_CODING_AGENT_DIR`. Revive assumes that variable belongs to pi and
   links omp's extension into omp's default folder (`~/.omp/agent/extensions`). Named
   profiles (`--profile`) have their own extension folder and are not installed into.
+- **Continue** (off by default) brings an omp session back with `omp … --restore <id>`
+  instead of `--resume <id>`, for that terminal and the sessions after it, automatic and
+  manual resumes alike (`revive.mjs restore T on|off` does the same). `--restore` reopens
+  the session as `--resume` does, then goes on with what the last process left
+  unfinished: the interrupted turn and the subagents it was running. That is work, not
+  only the conversation: a batch of tool calls that was cut off **runs again**, and the
+  model carries on without asking you first. Nothing is continued when the last turn had
+  finished or you interrupted it. An automatic resume still leaves out the flags that lift
+  approvals (`--auto-approve`, `--approval-mode`, `--plan-yolo`), so tools that need
+  approval still ask. The resumed pane says it is continuing. Needs omp 18.16 or later.
 
 ### Droid and Cursor
 
