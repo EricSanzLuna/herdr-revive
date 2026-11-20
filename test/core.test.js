@@ -195,6 +195,19 @@ test("where a session stands", () => {
   assert.equal(stateOf(null, { live: false, pid: 1 }), null);
 });
 
+test("a Claude Code session started in Code Mode comes back only where Code Mode is on", () => {
+  const MODE = "CLAUDE_CODE_EXPERIMENTAL_CODE_MODE";
+  assert.deepEqual(needsOf("claude", ["claude"], { [MODE]: "1", PATH: "/bin" }), [MODE]);
+  assert.deepEqual(needsOf("claude", ["claude"], { CLAUDE_CONFIG_DIR: "/h/.claude-work", [MODE]: "1" }), ["CLAUDE_CONFIG_DIR", MODE]);
+  assert.deepEqual(needsOf("claude", ["claude"], { [MODE]: "" }), []);
+  assert.deepEqual(needsOf("codex", ["codex"], { [MODE]: "1" }), [], "Claude Code's alone");
+  const rec = readRecord(labels({ agent: "claude", session: ID, shell: 100, needs: JSON.stringify([MODE]) }));
+  assert.deepEqual(rec.needs, [MODE]);
+  assert.equal(shouldResume(rec, { pid: 200, shellPid: 200 }).go, false, "a shell without Code Mode doesn't resume it");
+  assert.equal(shouldResume(rec, { pid: 200, shellPid: 200, env: { [MODE]: "1" } }).go, true, "one with it on does");
+  assert.doesNotMatch(resumeScript({ ...rec, cwd: "/w" }, "/e"), new RegExp(MODE), "its value is never carried");
+});
+
 test("a shell resumes only its own terminal's lost session", () => {
   const rec = readRecord(labels({ agent: "claude", session: ID, shell: 100 }));
   assert.equal(shouldResume(rec, { pid: 200, shellPid: 200 }).go, true);

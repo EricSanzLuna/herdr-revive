@@ -108,8 +108,11 @@ function codexOneShot(args) {
  *
  * `env` lists the variables that say where the agent keeps its sessions: a
  * session started under `CLAUDE_CONFIG_DIR=~/.claude-work` is found, and
- * resumed, only under that same folder. The hook records their names, not
- * their values (see `needs` below). `findIn` lists flags of the same kind.
+ * resumed, only under that same folder. Claude Code's
+ * `CLAUDE_CODE_EXPERIMENTAL_CODE_MODE` is one too: a session started in its
+ * Code Mode can be resumed only with Code Mode on, and Claude Code refuses it
+ * otherwise. The hook records their names, not their values (see `needs`
+ * below). `findIn` lists flags of the same kind.
  * `oneShot` tells a run that answers and quits (`claude -p`, `codex exec`)
  * from an interactive session, given the words after the program's name:
  * such a run has hooks too, and must not replace the session on record.
@@ -126,7 +129,7 @@ export const AGENTS = {
     resume: (id, flags) => ["claude", ...flags, "--resume", id],
     fork: (id, flags) => ["claude", ...flags, "--resume", id, "--fork-session"],
     end: claudeEnd,
-    env: ["CLAUDE_CONFIG_DIR"],
+    env: ["CLAUDE_CONFIG_DIR", "CLAUDE_CODE_EXPERIMENTAL_CODE_MODE"],
     oneShot: (args) => args.some((w) => w === "-p" || w === "--print"),
     carry: {
       "--dangerously-skip-permissions": 0,
