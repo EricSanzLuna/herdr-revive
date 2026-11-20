@@ -108,8 +108,14 @@ function codexOneShot(args) {
  *
  * `env` lists the variables that say where the agent keeps its sessions: a
  * session started under `CLAUDE_CONFIG_DIR=~/.claude-work` is found, and
- * resumed, only under that same folder. The hook records their names, not
- * their values (see `needs` below). `findIn` lists flags of the same kind.
+ * resumed, only under that same folder. Claude Code's
+ * `CLAUDE_CODE_EXPERIMENTAL_CODE_MODE` is one too: a session started in its
+ * Code Mode can be resumed only with Code Mode on, and Claude Code refuses it
+ * otherwise. The hook records their names, not their values (see `needs`
+ * below). `on` gives the one value that counts for a variable that is a
+ * switch, not a folder: `CLAUDE_CODE_EXPERIMENTAL_CODE_MODE=0` is Code Mode
+ * off, so neither a session started with it nor a shell that sets it is in
+ * Code Mode. `findIn` lists flags of the same kind.
  * `oneShot` tells a run that answers and quits (`claude -p`, `codex exec`)
  * from an interactive session, given the words after the program's name:
  * such a run has hooks too, and must not replace the session on record.
@@ -126,7 +132,8 @@ export const AGENTS = {
     resume: (id, flags) => ["claude", ...flags, "--resume", id],
     fork: (id, flags) => ["claude", ...flags, "--resume", id, "--fork-session"],
     end: claudeEnd,
-    env: ["CLAUDE_CONFIG_DIR"],
+    env: ["CLAUDE_CONFIG_DIR", "CLAUDE_CODE_EXPERIMENTAL_CODE_MODE"],
+    on: { CLAUDE_CODE_EXPERIMENTAL_CODE_MODE: "1" },
     oneShot: (args) => args.some((w) => w === "-p" || w === "--print"),
     carry: {
       "--dangerously-skip-permissions": 0,
@@ -706,7 +713,9 @@ export function needsCommand(rec, { dialect = "posix" } = {}) {
 
 /** What to do by hand for a record with needs, as one sentence ending in the command. */
 export function needsHint(rec, { dialect = "posix" } = {}) {
-  const vars = rec.needs.filter((n) => !n.startsWith("-"));
+  const on = AGENTS[rec.agent]?.on ?? {};
+  // A switch's value is no folder: it can be named (`CLAUDE_CODE_EXPERIMENTAL_CODE_MODE=1`).
+  const vars = rec.needs.filter((n) => !n.startsWith("-")).map((n) => (on[n] === undefined ? n : `${n}=${on[n]}`));
   const flags = rec.needs.filter((n) => n.startsWith("-"));
   const how = [vars.length ? `set ${vars.join(", ")}` : "", flags.length ? `fill in ${flags.join(", ")}` : ""].filter(Boolean).join(" and ");
   return `${how[0].toUpperCase()}${how.slice(1)}, then run: ${needsCommand(rec, { dialect })}`;
@@ -727,7 +736,17 @@ export function unresumable(rec) {
  * The needs the shell doesn't meet: a variable it doesn't set, a `findIn`
  * flag always. The session then isn't resumed by itself.
  */
-export const unmet = (rec, env = {}) => (rec?.needs ?? []).filter((n) => n.startsWith("-") || typeof env[n] !== "string" || env[n] === "");
+export const unmet = (rec, env = {}) => (rec?.needs ?? []).filter((n) => n.startsWith("-") || !isSet(rec.agent, n, env[n]));
+
+/**
+ * Whether the agent's `env` variable `name` counts as set to `value`: any
+ * value but "" for a folder, only the `on` value for a switch.
+ */
+function isSet(key, name, value) {
+  if (typeof value !== "string" || value === "") return false;
+  const on = AGENTS[key]?.on?.[name];
+  return on === undefined || value === on;
+}
 
 /** One word for a POSIX shell, quoted only when it needs to be. */
 export function shQuote(word) {
@@ -797,7 +816,7 @@ export function needsOf(key, argv = [], env = {}) {
   if (!agent) return [];
   const words = argv.slice(argsStart(key, argv)).map(String);
   const flags = (agent.findIn ?? []).filter((f) => words.some((w) => w === f || w.startsWith(`${f}=`)));
-  const set = (agent.env ?? []).filter((n) => typeof env[n] === "string" && env[n] !== "");
+  const set = (agent.env ?? []).filter((n) => isSet(key, n, env[n]));
   return [...set, ...flags];
 }
 
