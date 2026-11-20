@@ -132,9 +132,11 @@ and omp's `--skills` (`commit,review`). A value that looks like a path is droppe
 from the record. For a session started under another config folder (`CLAUDE_CONFIG_DIR`,
 `CODEX_HOME`, `PI_CODING_AGENT_DIR`, …), Revive records only the variable's name, and
 resumes the session by itself only when the new shell sets that variable on its own (in
-your rc file, say). Claude Code's Code Mode (`CLAUDE_CODE_EXPERIMENTAL_CODE_MODE`) is
-kept the same way: a session started in it can be resumed only with Code Mode on. A session started with pi's or omp's `--session-dir` never resumes by
-itself. In both cases the shell prints a dim line once, and the dialog shows the command to
+your rc file, say). Claude Code's Code Mode (`CLAUDE_CODE_EXPERIMENTAL_CODE_MODE=1`) is
+kept the same way, since a session started in it can be resumed only with Code Mode on;
+turned on in `~/.claude/settings.json` instead of the shell, it gets the command to run
+rather than coming back by itself. A session started with pi's or omp's `--session-dir`
+never resumes by itself. In both cases the shell prints a dim line once, and the dialog shows the command to
 run in a shell that has what's missing, with a **Copy command** button. It doesn't type
 the command itself, and offers no Resume or Fork for that session.
 

@@ -5,7 +5,7 @@ import { mkdtempSync, writeFileSync, chmodSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  AGENTS, agentKey, needsOf, carriedFlags, isOneShot, validId, command, shQuote, shJoin, readRecord, labelArgs, clearArgs,
+  AGENTS, agentKey, needsOf, needsHint, carriedFlags, isOneShot, validId, command, shQuote, shJoin, readRecord, labelArgs, clearArgs,
   stateOf, shouldResume, ownShell, isShell, promptShell, idleWrappedShell, resumeScript, attendedFlags, ago, printfLine,
   canRestore, restores, resumeLine, needsCommand, resumeScriptPwsh,
 } from "../mods/revive/lib/core.js";
@@ -200,11 +200,14 @@ test("a Claude Code session started in Code Mode comes back only where Code Mode
   assert.deepEqual(needsOf("claude", ["claude"], { [MODE]: "1", PATH: "/bin" }), [MODE]);
   assert.deepEqual(needsOf("claude", ["claude"], { CLAUDE_CONFIG_DIR: "/h/.claude-work", [MODE]: "1" }), ["CLAUDE_CONFIG_DIR", MODE]);
   assert.deepEqual(needsOf("claude", ["claude"], { [MODE]: "" }), []);
+  assert.deepEqual(needsOf("claude", ["claude"], { [MODE]: "0" }), [], "0 is Code Mode off");
   assert.deepEqual(needsOf("codex", ["codex"], { [MODE]: "1" }), [], "Claude Code's alone");
   const rec = readRecord(labels({ agent: "claude", session: ID, shell: 100, needs: JSON.stringify([MODE]) }));
   assert.deepEqual(rec.needs, [MODE]);
   assert.equal(shouldResume(rec, { pid: 200, shellPid: 200 }).go, false, "a shell without Code Mode doesn't resume it");
   assert.equal(shouldResume(rec, { pid: 200, shellPid: 200, env: { [MODE]: "1" } }).go, true, "one with it on does");
+  assert.equal(shouldResume(rec, { pid: 200, shellPid: 200, env: { [MODE]: "0" } }).go, false, "one with it set to 0 doesn't");
+  assert.equal(needsHint(rec), `Set ${MODE}=1, then run: claude --resume ${ID}`);
   assert.doesNotMatch(resumeScript({ ...rec, cwd: "/w" }, "/e"), new RegExp(MODE), "its value is never carried");
 });
 
