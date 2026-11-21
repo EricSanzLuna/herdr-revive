@@ -333,9 +333,16 @@ hooks run as children of the `muse-bin-<version>` process in the terminal's fore
 `muse` launcher execs it), with a reduced environment: no `HC_TERMINAL_ID` and no
 `HC_TERMINAL_SOCKET`, but `MUSE_SESSION_ID`, `MUSE_THREAD_ID` and the plugin's own variables.
 So the hook installed for Muse (`hook --agent muse`, and only that one) finds its terminal: the
-live one whose foreground pid `hookOwner` reaches from the hook, the same walk that then checks
-it. The plugin's `when` (`envPresent: HC_TERMINAL_ID`, judged in Muse's own environment) keeps it
-out of any session outside an hc terminal, so `hc` never starts a core for it. `other` is
+live one whose foreground pid is the nearest of all terminals' up the hook's ancestors, then
+checked by the same `hookOwner` walk. The plugin's `when` (`envPresent: HC_TERMINAL_ID`, judged
+in Muse's own environment, and only when Muse loads it) keeps it out of any session outside an
+hc terminal. It doesn't stop a hook that runs while the core is down. With no
+`HC_TERMINAL_SOCKET`, the hook sets it to the default core's socket
+(`${XDG_STATE_HOME:-~/.local/state}/herdr-core/default/default.sock`, the one a bare `hc`
+talks to) before `coreUp`, so it never calls `hc` while that core is down. The settle process
+inherits it. Muse's hooks also get a reduced PATH: the hook scripts name node and `hc` by the
+paths `install` found, and `muse`/`hc` run by the path `whichCli` finds (PATH, then
+`~/.local/bin`). `other` is
 settled as Copilot's `user_exit` is. `muse plugins validate` accepts the bundle install writes.
 Not checked yet: a real reboot with a Muse session open.
 
