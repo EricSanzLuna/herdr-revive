@@ -215,7 +215,7 @@ Each agent is set up only when it looks installed:
 | Droid | The two hooks in `~/.factory/hooks.json` if you have one, else in the `hooks` key of `~/.factory/settings.json` (Droid reads that one only while there is no `hooks.json`). Droid warns that its hooks changed and shows them in `/hooks`. |
 | Cursor | `sessionStart` and `sessionEnd` in `~/.cursor/hooks.json`. A `~/.cursor` folder alone doesn't count as installed, since the Cursor editor makes one and reads that `hooks.json` too. |
 | Copilot CLI | `SessionStart` and `SessionEnd` in a file of its own, `~/.copilot/hooks/herdr-revive.json` (Copilot reads every `*.json` there); `uninstall` deletes it. A `~/.copilot` folder alone doesn't count as installed, since the Copilot app and editors make one too. On Windows each entry also has a `powershell` command, the one Copilot runs there. |
-| Muse | A plugin bundle, `herdr-revive`, written into `mods/revive/muse-plugin/` (its two hook scripts name the engine by its full path, since Muse runs them from a copy in its own cache), then `muse plugins install … --scope user` and `muse plugins approve herdr-revive`. It loads only inside an hc terminal. `uninstall` runs `muse plugins remove herdr-revive --delete-data` and deletes the bundle. Muse loads it the next time a session starts. Not on Windows. |
+| Muse | A plugin bundle, `herdr-revive`, written into `mods/revive/muse-plugin/`, then `muse plugins install … --scope user` and `muse plugins approve herdr-revive`. Muse runs the hooks from a copy in its own cache with a reduced PATH, so the two hook scripts name the engine, node and `hc` by the full paths `install` found (falling back to PATH if node or `hc` has moved since). `install` notes which bundle it installed in `~/.local/state/herdr-revive/muse-plugin`: a bundle that changed (a new version, another engine path, another checkout's install since) replaces the plugin, and if Muse refuses the new one, the old one goes back. It loads only inside an hc terminal. `uninstall` runs `muse plugins remove herdr-revive --delete-data` and deletes the bundle. Muse loads it the next time a session starts. Not on Windows. |
 
 Droid's, Cursor's and Copilot CLI's hooks run `revive.mjs hook --agent droid|cursor|copilot`.
 Muse's plugin runs `revive.mjs hook --agent muse`.
@@ -475,14 +475,22 @@ flags, `--session`/`--fork` or how it ends on a signal.
   `SessionStart` comes at a session's first answer (`source: "startup"`) and again at the
   first message after `muse resume <id>` (`source: "resume"`), so a session you never sent
   a message has no record. Not yet checked: a real reboot with a Muse session open.
-- Muse runs its hooks with a reduced environment, without `HC_TERMINAL_ID`. The hook
-  installed for Muse (`--agent muse`) finds its terminal instead: the live one whose
-  foreground process the hook descends from, by the same check every hook makes. The
-  plugin loads only inside an hc terminal, so a core is there to ask.
+- Muse runs its hooks with a reduced environment, without `HC_TERMINAL_ID` or
+  `HC_TERMINAL_SOCKET`. The hook installed for Muse (`--agent muse`) finds its terminal
+  instead: the live terminal whose foreground process is the hook's nearest ancestor,
+  checked by the same walk every hook makes. A terminal further up the process tree (one
+  you started herdr-core from by hand, say) never takes the record.
+- Before asking `hc`, that hook checks the default core's socket,
+  `${XDG_STATE_HOME:-~/.local/state}/herdr-core/default/default.sock`: the one an `hc`
+  without `HC_TERMINAL_SOCKET` talks to. While that core is down it does nothing, since
+  `hc` would start a new core. A Muse session in a terminal of another core isn't
+  recorded. `REVIVE_DEBUG=1` in Muse's environment says `herdr-core is not up` then.
 - `/exit` sends `SessionEnd` with reason `other`, and a hangup (a reboot, a core restart)
   sends none. Revive settles `other` as it does Copilot's `user_exit`: after
   `REVIVE_SETTLE_MS` it forgets the session only if the terminal still has the same, living
-  shell.
+  shell. The trade-off: if Muse alone crashes or is killed and still reports `other`, its
+  shell outlives it as after `/exit`, and the session is forgotten. (Claude Code keeps
+  one in that case.) Muse's reason for a crash hasn't been captured yet.
 - The `muse` launcher execs a versioned binary (`muse-bin-<version>`), which is what the
   terminal's foreground shows; both names count, only as the program itself.
 - A running Muse session started before Revive was installed is not found from its files:
