@@ -11,7 +11,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { parseProcesses, hasTranscript } from "../mods/revive/revive.mjs";
 import { hookOwner, hookPayload, needsHint, command, readRecord } from "../mods/revive/lib/core.js";
-import { POSIX_HARNESS } from "./helpers/platform.js";
+import { POSIX_HARNESS, WINDOWS } from "./helpers/platform.js";
 
 const ENGINE = resolve("mods/revive/revive.mjs");
 const ID = "0c8b28eb-1111-4222-8333-444455556666";
@@ -804,9 +804,12 @@ const museRec = { ...remembered, "revive.agent": "muse", "revive.session": MUSE_
 // into its backlog while this process waits in execFileSync).
 const museCoreDir = mkdtempSync(join(tmpdir(), "revive-muse-core-"));
 const museCore = join(museCoreDir, "core.sock");
-const museCoreServer = createServer((c) => c.end());
-await new Promise((ok) => museCoreServer.listen(museCore, ok));
-museCoreServer.unref();
+// Only where the Muse tests run (POSIX_HARNESS): Windows refuses a Unix socket in its temp folder.
+if (!WINDOWS) {
+  const museCoreServer = createServer((c) => c.end());
+  await new Promise((ok) => museCoreServer.listen(museCore, ok));
+  museCoreServer.unref();
+}
 const noTerminalId = (env = {}) => ({ env: { HC_TERMINAL_ID: "", HC_TERMINAL_SOCKET: "", REVIVE_HC_SOCKET: museCore, ...env } });
 
 test("Muse's SessionStart is remembered on the terminal whose foreground runs it, without HC_TERMINAL_ID", POSIX_HARNESS, () => {
