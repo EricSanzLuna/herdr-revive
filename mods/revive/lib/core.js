@@ -424,7 +424,11 @@ export const AGENTS = {
     // (a core restart, a reboot) sends no SessionEnd at all. "other" can't
     // tell the person's exit from a signal, so it is settled by whether the
     // terminal outlived Muse. clear and resume start another session in the
-    // same process, as in Claude Code.
+    // same process, as in Claude Code. The trade-off: if Muse alone crashes or
+    // is killed and still sends a SessionEnd, its shell outlives it as after
+    // /exit, and the session is forgotten where Claude Code's ("other") would
+    // be kept. Muse 1.4.24's reason for those wasn't captured: if it is one of
+    // their own, mapping it to "keep" here keeps them.
     end: (reason) => (reason === "clear" || reason === "resume" ? "ignore" : "settle"),
     oneShot: museOneShot,
     carry: {

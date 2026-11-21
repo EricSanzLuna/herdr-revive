@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import { mkdtempSync, writeFileSync, readFileSync, existsSync, mkdirSync, chmodSync, symlinkSync, lstatSync, statSync, realpathSync, copyFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { delimiter, join, resolve } from "node:path";
+import { delimiter, dirname, join, resolve } from "node:path";
 import { withHooks, hasHooks, withShellBlock, shellBlock, withCursorHooks, hasCursorHooks, withCopilotHooks, hasCopilotHooks, engineWord } from "../mods/revive/revive.mjs";
 import { POSIX_HARNESS } from "./helpers/platform.js";
 
@@ -618,8 +618,11 @@ const fakeMuse = (home) => {
 d=${JSON.stringify(dir)}
 echo "$*" >> "$d/calls.log"
 [ "$1" = plugins ] || exit 2
+[ -f "$d/broken" ] && { echo "muse crashed" >&2; exit 3; }
 case "$2" in
-  install) rm -rf "$d/cache"; cp -R "$3" "$d/cache"; rm -f "$d/trusted" ;;
+  install)
+    [ -f "$d/refuse-once" ] && { rm -f "$d/refuse-once"; echo "refused" >&2; exit 1; }
+    rm -rf "$d/cache"; cp -R "$3" "$d/cache"; rm -f "$d/trusted" ;;
   approve) [ -d "$d/cache" ] && touch "$d/trusted" ;;
   remove) [ -d "$d/cache" ] || exit 1; rm -rf "$d/cache" "$d/trusted" ;;
   inspect)
@@ -634,48 +637,105 @@ esac
   return { cli, calls, cache: join(dir, "cache") };
 };
 
-test("Muse's plugin is installed from a bundle naming the engine, trusted once, and removed whole", POSIX_HARNESS, () => {
-  const { home, run } = bareHome();
+/**
+ * Runs the engine with a fake Muse, in a home of its own and with a bundle
+ * folder of its own: the tests never touch the mod's real muse-plugin.
+ */
+const museHome = ({ cli = true } = {}) => {
+  const { home } = bareHome();
   const m = fakeMuse(home);
-  const env = { REVIVE_MUSE: m.cli };
-  const go = (...args) => execFileSync(process.execPath, [ENGINE, ...args], { encoding: "utf8", env: { ...process.env, HOME: home, USERPROFILE: home, ...env } });
-  try {
-    assert.match(go("install", "--no-shell", "--no-codex"), /muse-plugin[\s\S]*Muse loads the plugin/);
-    assert.deepEqual(m.calls().filter((c) => !c.startsWith("plugins inspect")), [`plugins install ${resolve("mods/revive/muse-plugin")} --scope user`, "plugins approve herdr-revive"]);
-    const manifest = JSON.parse(readFileSync(join(m.cache, ".muse-plugin", "plugin.json"), "utf8"));
-    assert.equal(manifest.name, "herdr-revive");
-    assert.deepEqual(manifest.when, { anyOf: [{ envPresent: "HC_TERMINAL_ID" }] });
-    assert.deepEqual(manifest.capabilities.hooks.map((h) => [h.event, h.command[1]]), [["SessionStart", "hooks/session_start.sh"], ["SessionEnd", "hooks/session_end.sh"]]);
-    for (const file of ["session_start.sh", "session_end.sh"]) {
-      assert.equal(readFileSync(join(m.cache, "hooks", file), "utf8").trim().split("\n").pop(), `exec node ${ENGINE} hook --agent muse`);
-    }
-    assert.equal(JSON.parse(go("doctor")).muse, true);
-    const before = m.calls().length;
-    assert.match(go("install", "--no-shell", "--no-codex"), /Nothing to change/);
-    assert.deepEqual(m.calls().slice(before).filter((c) => !c.startsWith("plugins inspect")), [], "installed and trusted: left as it is");
-    go("uninstall", "--no-shell");
-    assert.ok(!existsSync(m.cache));
-    assert.ok(m.calls().includes("plugins remove herdr-revive --delete-data"));
-    assert.ok(!existsSync(resolve("mods/revive/muse-plugin")), "the bundle goes too");
-    assert.equal(JSON.parse(go("doctor")).muse, false);
-  } finally {
-    rmSync(resolve("mods/revive/muse-plugin"), { recursive: true, force: true });
+  const bundle = join(home, "muse-plugin");
+  const env = { ...process.env, HOME: home, USERPROFILE: home, REVIVE_MUSE_BUNDLE: bundle };
+  delete env.XDG_STATE_HOME;
+  if (cli) env.REVIVE_MUSE = m.cli;
+  const go = (...args) => execFileSync(process.execPath, [ENGINE, ...args], { encoding: "utf8", env });
+  // Install's warnings go to stderr.
+  const both = (...args) => { const r = spawnSync(process.execPath, [ENGINE, ...args], { encoding: "utf8", env }); return r.stdout + r.stderr; };
+  return { home, m, bundle, env, go, both, stamp: join(home, ".local", "state", "herdr-revive", "muse-plugin") };
+};
+const noInspect = (calls) => calls.filter((c) => !c.startsWith("plugins inspect"));
+
+test("Muse's plugin is installed from a bundle naming the engine, trusted once, and removed whole", POSIX_HARNESS, () => {
+  const { m, bundle, go, stamp } = museHome();
+  assert.match(go("install", "--no-shell", "--no-codex"), /muse-plugin[\s\S]*Muse loads the plugin/);
+  assert.deepEqual(noInspect(m.calls()), [`plugins install ${bundle} --scope user`, "plugins approve herdr-revive"]);
+  assert.equal(readFileSync(stamp, "utf8").trim(), bundle);
+  const manifest = JSON.parse(readFileSync(join(m.cache, ".muse-plugin", "plugin.json"), "utf8"));
+  assert.equal(manifest.name, "herdr-revive");
+  assert.deepEqual(manifest.when, { anyOf: [{ envPresent: "HC_TERMINAL_ID" }] });
+  assert.deepEqual(manifest.capabilities.hooks.map((h) => [h.event, h.command[1]]), [["SessionStart", "hooks/session_start.sh"], ["SessionEnd", "hooks/session_end.sh"]]);
+  for (const file of ["session_start.sh", "session_end.sh"]) {
+    const lines = readFileSync(join(m.cache, "hooks", file), "utf8").trim().split("\n");
+    // Muse's hooks get a reduced PATH: node by the path install ran with.
+    assert.equal(lines.find((l) => l.startsWith("node=")), `node=${process.execPath}`);
+    assert.equal(lines.pop(), `exec "$node" ${ENGINE} hook --agent muse`);
   }
+  assert.equal(JSON.parse(go("doctor")).muse, true);
+  const before = m.calls().length;
+  assert.match(go("install", "--no-shell", "--no-codex"), /Nothing to change/);
+  assert.deepEqual(noInspect(m.calls().slice(before)), [], "installed and trusted: left as it is");
+  go("uninstall", "--no-shell");
+  assert.ok(!existsSync(m.cache));
+  assert.ok(m.calls().includes("plugins remove herdr-revive --delete-data"));
+  assert.ok(!existsSync(bundle), "the bundle goes too");
+  assert.ok(!existsSync(stamp));
+  assert.equal(JSON.parse(go("doctor")).muse, false);
 });
 
 test("a Muse plugin left untrusted is trusted again by install", POSIX_HARNESS, () => {
-  const { home } = bareHome();
-  const m = fakeMuse(home);
-  const go = (...args) => execFileSync(process.execPath, [ENGINE, ...args], { encoding: "utf8", env: { ...process.env, HOME: home, USERPROFILE: home, REVIVE_MUSE: m.cli } });
-  try {
-    go("install", "--no-shell", "--no-codex");
-    rmSync(join(home, "fake-muse", "trusted"));
-    assert.equal(JSON.parse(go("doctor")).muse, false);
-    go("install", "--no-shell", "--no-codex");
-    assert.equal(JSON.parse(go("doctor")).muse, true);
-  } finally {
-    rmSync(resolve("mods/revive/muse-plugin"), { recursive: true, force: true });
-  }
+  const { home, go } = museHome();
+  go("install", "--no-shell", "--no-codex");
+  rmSync(join(home, "fake-muse", "trusted"));
+  assert.equal(JSON.parse(go("doctor")).muse, false);
+  go("install", "--no-shell", "--no-codex");
+  assert.equal(JSON.parse(go("doctor")).muse, true);
+});
+
+test("a Muse plugin another checkout installed since is installed from this one again", POSIX_HARNESS, () => {
+  const { m, bundle, go, stamp } = museHome();
+  go("install", "--no-shell", "--no-codex");
+  writeFileSync(stamp, "/elsewhere/mods/revive/muse-plugin\n");
+  const before = m.calls().length;
+  go("install", "--no-shell", "--no-codex");
+  assert.deepEqual(noInspect(m.calls().slice(before)), ["plugins remove herdr-revive", `plugins install ${bundle} --scope user`, "plugins approve herdr-revive"]);
+  assert.equal(readFileSync(stamp, "utf8").trim(), bundle);
+});
+
+test("Muse in ~/.local/bin, off the app's PATH, is run by its path", POSIX_HARNESS, () => {
+  const { home, m, env, go } = museHome({ cli: false });
+  mkdirSync(join(home, ".local", "bin"), { recursive: true });
+  symlinkSync(m.cli, join(home, ".local", "bin", "muse"));
+  env.PATH = [dirname(process.execPath), "/usr/bin", "/bin"].join(delimiter);
+  delete env.REVIVE_MUSE;
+  go("install", "--no-shell", "--no-codex");
+  assert.ok(existsSync(m.cache), "installed through ~/.local/bin/muse");
+  assert.equal(JSON.parse(go("doctor")).muse, true);
+});
+
+test("a failing `muse plugins inspect` is no 'not installed': install and uninstall leave things as they are", POSIX_HARNESS, () => {
+  const { home, m, bundle, go, both } = museHome();
+  go("install", "--no-shell", "--no-codex");
+  writeFileSync(join(home, "fake-muse", "broken"), "");
+  const before = m.calls().length;
+  assert.match(both("install", "--no-shell", "--no-codex"), /Couldn't install the Muse plugin: muse crashed/);
+  assert.match(both("uninstall", "--no-shell"), /Couldn't remove the Muse plugin: muse crashed/);
+  assert.deepEqual(noInspect(m.calls().slice(before)), []);
+  assert.ok(existsSync(bundle) && existsSync(m.cache));
+  assert.equal(JSON.parse(go("doctor")).muse, false);
+});
+
+test("a new Muse bundle that fails to install puts the old one back", POSIX_HARNESS, () => {
+  const { home, m, bundle, go, both } = museHome();
+  go("install", "--no-shell", "--no-codex");
+  // An older version's bundle is the one installed; the new one is refused once.
+  const old = (path) => writeFileSync(path, readFileSync(path, "utf8").replace(/"version": "[^"]*"/, '"version": "0.0.1"'));
+  old(join(bundle, ".muse-plugin", "plugin.json"));
+  old(join(m.cache, ".muse-plugin", "plugin.json"));
+  writeFileSync(join(home, "fake-muse", "refuse-once"), "");
+  assert.match(both("install", "--no-shell", "--no-codex"), /Couldn't install the Muse plugin: refused/);
+  assert.match(readFileSync(join(m.cache, ".muse-plugin", "plugin.json"), "utf8"), /"version": "0.0.1"/, "the old plugin is back in Muse");
+  assert.match(readFileSync(join(bundle, ".muse-plugin", "plugin.json"), "utf8"), /"version": "0.0.1"/, "and its files in the bundle");
+  assert.equal(JSON.parse(go("doctor")).muse, true);
 });
 
 test("--no-muse leaves Muse alone, and without Muse doctor doesn't ask for its plugin", POSIX_HARNESS, () => {
