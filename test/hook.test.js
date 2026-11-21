@@ -29,8 +29,11 @@ function setup({ labels = {}, app = null, argv = ["claude", "--model", "opus", "
 const fs = require("fs"), dir = ${JSON.stringify(dir)};
 const [cmd, t, ...rest] = process.argv.slice(2);
 const state = JSON.parse(fs.readFileSync(dir + "/state.json", "utf8"));
+const extra = state.extra ?? {};
 if (cmd === "ls") {
-  console.log(JSON.stringify({ terminals: [{ address: "t1" }] }));
+  console.log(JSON.stringify({ terminals: [...Object.keys(extra), "t1"].map((address) => ({ address })) }));
+} else if (cmd === "get" && extra[t]) {
+  console.log(JSON.stringify({ address: t, state: "live", labels: {}, ...extra[t] }));
 } else if (cmd === "get") {
   const fg = state.fg ?? Number(process.env.FAKE_FG);
   let argv = state.argv;
@@ -42,6 +45,7 @@ if (cmd === "ls") {
     foreground: { pid: fg, argv, cwd: "/w" } }));
 } else if (cmd === "label") {
   fs.appendFileSync(dir + "/labels.log", JSON.stringify(rest) + "\\n");
+  fs.appendFileSync(dir + "/targets.log", t + "\\n");
 }
 `);
   chmodSync(hc, 0o755);
@@ -67,7 +71,8 @@ if (cmd === "ls") {
     const file = join(dir, "state.json");
     writeFileSync(file, JSON.stringify({ ...JSON.parse(readFileSync(file, "utf8")), ...patch }));
   };
-  return { run, calls, set, state };
+  const targets = () => (existsSync(join(dir, "targets.log")) ? readFileSync(join(dir, "targets.log"), "utf8").trim().split("\n") : []);
+  return { run, calls, set, state, targets };
 }
 
 const start = { hook_event_name: "SessionStart", session_id: ID, cwd: "/w", source: "startup" };
@@ -794,7 +799,15 @@ const MUSE_ID = "01a1f4d6-1e4d-7322-9f7b-c29ea7491e16";
 const museFixture = (name) => JSON.parse(readFileSync(resolve("test/fixtures/muse", `${name}.json`), "utf8"));
 const muse = { bin: "muse-bin-1.4.24-R9131.1", argv: ["/Users/me/.local/bin/muse-bin-1.4.24-R9131.1", "--model", "m1", "--approval-mode", "never", "--workspace", "/x", "fix it"], hookArgs: "--agent muse" };
 const museRec = { ...remembered, "revive.agent": "muse", "revive.session": MUSE_ID };
-const noTerminalId = (env = {}) => ({ env: { HC_TERMINAL_ID: "", ...env } });
+// Muse's hooks get no HC_TERMINAL_SOCKET either: the hook checks the default
+// core's socket, here one that answers (a Unix socket accepts a connection
+// into its backlog while this process waits in execFileSync).
+const museCoreDir = mkdtempSync(join(tmpdir(), "revive-muse-core-"));
+const museCore = join(museCoreDir, "core.sock");
+const museCoreServer = createServer((c) => c.end());
+await new Promise((ok) => museCoreServer.listen(museCore, ok));
+museCoreServer.unref();
+const noTerminalId = (env = {}) => ({ env: { HC_TERMINAL_ID: "", HC_TERMINAL_SOCKET: "", REVIVE_HC_SOCKET: museCore, ...env } });
 
 test("Muse's SessionStart is remembered on the terminal whose foreground runs it, without HC_TERMINAL_ID", POSIX_HARNESS, () => {
   const { run, calls, set } = setup(muse);
@@ -822,6 +835,23 @@ test("only the hook installed for Muse looks for its terminal; any other still n
   const claude = setup({ hookArgs: "--agent claude" });
   claude.run(start, noTerminalId());
   assert.deepEqual(claude.calls(), []);
+});
+
+test("Muse's hook never calls hc while the default core is down, which would start one", POSIX_HARNESS, () => {
+  const { run, calls } = setup({ ...muse, labels: museRec });
+  run(museFixture("session-start"), noTerminalId({ REVIVE_HC_SOCKET: join(museCoreDir, "gone.sock") }));
+  run(museFixture("session-end-exit"), noTerminalId({ REVIVE_HC_SOCKET: join(museCoreDir, "gone.sock"), ...settle(process.pid).env }));
+  assert.deepEqual(calls(), []);
+});
+
+test("Muse's hook is recorded on the nearest terminal above it, not one listed first whose shell is further up", POSIX_HARNESS, () => {
+  const { run, calls, set, state, targets } = setup(muse);
+  // t0's shell is this test process, an ancestor of every hook the test runs
+  // (as a terminal is of a core started by hand inside it).
+  state({ extra: { t0: { pid: process.pid, foreground: { pid: process.pid, argv: ["node"] } } } });
+  run(museFixture("session-start"), noTerminalId());
+  assert.equal(set(calls())["revive.session"], MUSE_ID);
+  assert.deepEqual([...new Set(targets())], ["t1"]);
 });
 
 test("Muse's hook records nothing when no terminal runs it in its foreground", POSIX_HARNESS, () => {
