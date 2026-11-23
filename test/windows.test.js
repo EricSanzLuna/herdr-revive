@@ -13,7 +13,7 @@ import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
   agentKey, hookPayload, hookOwner, isShell, isPowerShell, promptShell, ownShell, idleWrappedShell, psQuote, psJoin, resumeLine, resumeScriptPwsh,
-  needsCommand, needsHint, notResumingLine, splitCommandLine, parseWinProcesses, readRecord, labelArgs,
+  needsCommand, needsHint, notResumingLine, splitCommandLine, parseWinProcesses, readRecord, labelArgs, shouldResume,
 } from "../mods/revive/lib/core.js";
 import { engineWord, hasCopilotHooks, pwshBlock, shellBlock, vetRecord, withCopilotHooks, withShellBlock, winOwners, winProcesses } from "../mods/revive/revive.mjs";
 import { claudeProject, claudeStartFolder, agentDirs } from "../mods/revive/lib/sessions.js";
@@ -217,6 +217,32 @@ test("winOwners: the person's own folder passes; a missing one, or one Everyone 
   assert.equal(got.get(mine), true);
   assert.equal(got.get(open), false);
   assert.equal(got.get(join(mine, "missing")), false);
+});
+
+// Windows PowerShell 5.1 writes a JSON array as one object: every folder was refused when asked about several (#70).
+for (const ps of POWERSHELLS) {
+  test(`winOwners under ${ps}: several folders at once, each answered`, () => {
+    const a = temp("own-a"), b = temp("own-b");
+    const script = `import { winOwners } from ${JSON.stringify(pathToFileURL(ENGINE).href)};
+      process.stdout.write(JSON.stringify([...winOwners(JSON.parse(process.argv[1]))]));`;
+    const out = execFileSync(process.execPath, ["--input-type=module", "-e", script, JSON.stringify([a, b, join(a, "missing")])],
+      { env: { ...process.env, REVIVE_PS: ps }, encoding: "utf8" });
+    assert.deepEqual(new Map(JSON.parse(out)), new Map([[a, true], [b, true], [join(a, "missing"), false]]));
+  });
+}
+
+test("Windows: a folder whose owner PowerShell couldn't tell in time is refused for now, not marked failed (#71)", () => {
+  const dir = temp("unknown");
+  const rec = vetRecord({ agent: "claude", session: ID, cwd: dir, auto: true }, { win: true, owners: () => new Map([[dir, null]]) });
+  assert.equal(rec.cwd, null);
+  assert.equal(rec.cwdUnknown, true);
+  const v = shouldResume(rec, { pid: 2, shellPid: 2 });
+  assert.equal(v.go, false);
+  assert.equal(v.hint, true);
+  assert.equal(v.retry, true);
+  const no = vetRecord({ agent: "claude", session: ID, cwd: dir, auto: true }, { win: true, owners: () => new Map([[dir, false]]) });
+  assert.equal(no.cwdUnknown, undefined);
+  assert.equal(shouldResume(no, { pid: 2, shellPid: 2 }).retry, undefined);
 });
 
 test("Claude Code's start folder is read from a transcript that names a Windows folder", WINDOWS_ONLY, () => {

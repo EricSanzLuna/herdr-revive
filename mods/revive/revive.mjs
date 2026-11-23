@@ -65,7 +65,7 @@ function powershell() {
 const psArgs = (script) => ["-NoProfile", "-NonInteractive", "-NoLogo", "-ExecutionPolicy", "Bypass", "-EncodedCommand",
   Buffer.from(`[Console]::OutputEncoding = [Text.Encoding]::UTF8\n${script}`, "utf16le").toString("base64")];
 const runPs = async (script, env = {}) => (await run(powershell(), psArgs(script), { env: { ...process.env, ...env }, maxBuffer: 16 * 1024 * 1024, windowsHide: true, timeout: 15_000 })).stdout;
-const runPsSync = (script, env = {}) => execFileSync(powershell(), psArgs(script), { env: { ...process.env, ...env }, encoding: "utf8", maxBuffer: 16 * 1024 * 1024, windowsHide: true, timeout: 15_000, stdio: ["ignore", "pipe", "ignore"] });
+const runPsSync = (script, env = {}, { timeout = 15_000 } = {}) => execFileSync(powershell(), psArgs(script), { env: { ...process.env, ...env }, encoding: "utf8", maxBuffer: 16 * 1024 * 1024, windowsHide: true, timeout, stdio: ["ignore", "pipe", "ignore"] });
 export const ENGINE = fileURLToPath(import.meta.url);
 /**
  * `hc` by its full path when it can be found (PATH, then ~/.local/bin, where
@@ -84,8 +84,8 @@ const hcBin = () => (hcExe ??= process.env.REVIVE_HC || whichCli("hc") || "hc");
  */
 export const hcEnv = (env) => Object.fromEntries(Object.entries(env).filter(([k]) => !k.startsWith("CLAUDE_CODE_") && k !== "CLAUDECODE"));
 
-async function hc(args, env = process.env) {
-  const { stdout } = await run(hcBin(), args, { env: hcEnv(env), maxBuffer: 8 * 1024 * 1024, timeout: 10_000 });
+async function hc(args, env = process.env, { timeout = 10_000 } = {}) {
+  const { stdout } = await run(hcBin(), args, { env: hcEnv(env), maxBuffer: 8 * 1024 * 1024, timeout });
   return stdout;
 }
 
@@ -398,7 +398,12 @@ export function vetRecord(rec, { uid = process.getuid?.(), gid = process.getgid?
     const st = statSync(real);
     // Windows has no mode bits to read (every folder says 0o666) and no uid:
     // the folder's ACL says who owns it and who may write to it (winOwners).
-    if (win) return st.isDirectory() && owners([real]).get(real) === true ? { ...rec, cwd: real } : { ...rec, cwd: null, cwdRefused: rec.cwd };
+    if (win) {
+      const owned = st.isDirectory() ? owners([real]).get(real) : false;
+      if (owned === true) return { ...rec, cwd: real };
+      // PowerShell didn't answer in time: refused, but only for now (see shouldResume).
+      return { ...rec, cwd: null, cwdRefused: rec.cwd, ...(owned === null ? { cwdUnknown: true } : {}) };
+    }
     const groupOk = (st.mode & 0o020) === 0 || (uid !== undefined && st.gid === gid && gid === uid);
     if (st.isDirectory() && (uid === undefined || st.uid === uid) && (st.mode & 0o002) === 0 && groupOk) return { ...rec, cwd: real };
   } catch { /* gone */ }
@@ -413,32 +418,42 @@ export function vetRecord(rec, { uid = process.getuid?.(), gid = process.getgid?
  * outside the user profile (C:\\code, D:\\work), the place most code lives, so
  * refusing it would refuse nearly every project. Answers are kept for the
  * process: the dialog asks for many folders at once (see `list`).
+ *
+ * The paths are assigned before the loop: Windows PowerShell 5.1's
+ * ConvertFrom-Json writes a JSON array as one object, which `@()` would
+ * wrap into a one-element list, and every folder would be refused.
+ * A folder PowerShell didn't answer for (a timeout while a rebooted machine
+ * starts many shells at once) is null, "don't know", and isn't kept.
  */
 const WIN_OWNERS = `
 $me = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
 $owners = @($me, 'S-1-5-32-544', 'S-1-5-18')
 $open = @('S-1-1-0', 'S-1-5-7')
 $res = @{}
-foreach ($p in @(ConvertFrom-Json $env:REVIVE_PATHS)) {
+$paths = ConvertFrom-Json $env:REVIVE_PATHS
+foreach ($p in $paths) {
   try {
     $acl = Get-Acl -LiteralPath $p
     $ok = $owners -contains $acl.GetOwner([Security.Principal.SecurityIdentifier]).Value
     foreach ($r in $acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])) {
       if ($r.AccessControlType -eq 'Allow' -and $open -contains $r.IdentityReference.Value -and ([int64]$r.FileSystemRights -band 0x500C0006)) { $ok = $false }
     }
-    $res[$p] = $ok
-  } catch { $res[$p] = $false }
+    $res[[string]$p] = $ok
+  } catch { $res[[string]$p] = $false }
 }
 ConvertTo-Json -InputObject $res -Compress`;
 const ownerCache = new Map();
 export function winOwners(paths) {
   const ask = [...new Set(paths)].filter((p) => !ownerCache.has(p));
   if (ask.length) {
-    let got = {};
-    try { got = JSON.parse(runPsSync(WIN_OWNERS, { REVIVE_PATHS: JSON.stringify(ask) }) || "{}"); } catch { /* unknown: refused */ }
-    for (const p of ask) ownerCache.set(p, got[p] === true);
+    let got = null;
+    // Once more, with longer, when it times out: at boot every shell asks at once.
+    for (const timeout of [15_000, 90_000]) {
+      try { got = JSON.parse(runPsSync(WIN_OWNERS, { REVIVE_PATHS: JSON.stringify(ask) }, { timeout }) || "{}"); break; } catch { /* again */ }
+    }
+    if (got) for (const p of ask) ownerCache.set(p, got[p] === true);
   }
-  return new Map(paths.map((p) => [p, ownerCache.get(p) === true]));
+  return new Map(paths.map((p) => [p, ownerCache.has(p) ? ownerCache.get(p) : null]));
 }
 
 /** Asks for every recorded folder at once (Windows), so the dialog makes one PowerShell call, not one per terminal. */
@@ -501,7 +516,8 @@ async function check(args) {
   debug(verdict.why);
   if (!verdict.go && verdict.hint) {
     // Said once: marked failed, the next shell stays quiet; the dialog offers it by hand.
-    await label(t, labelArgs({ failed: Date.now() }));
+    // Not when it is only unknown for now: the next start asks again.
+    if (!verdict.retry) await label(t, labelArgs({ failed: Date.now() }));
     process.stdout.write(`${notResumingLine(rec, verdict.why, { dialect })}\n`);
     return;
   }
@@ -655,7 +671,9 @@ async function resume(args) {
   // Run from inside a herdr terminal, `hc send` delivers the text as a note from
   // that terminal (`<hc from="t3">…</hc>`), which the shell can't run.
   const { HC_TERMINAL_ID: _, ...env } = process.env;
-  await hc(["send", t, line], env);
+  // `hc send` waits for a half-typed draft in the terminal (up to 60 s), and a
+  // loaded machine is slow to start it: 10 s reports a send that still arrives.
+  await hc(["send", t, line], env, { timeout: 90_000 });
 }
 
 async function auto(args) {

@@ -986,6 +986,8 @@ export function shouldResume(rec, { pid, since = null, shellPid, env = {} }) {
   if (rec.failed) return { go: false, why: "the last resume failed" };
   if (sameShell(rec, { pid, since })) return { go: false, why: "same shell as before" };
   // The engine found the folder missing or not the person's (vetRecord).
+  // Unknown (PowerShell didn't answer in time) is said, but not remembered as failed.
+  if (rec.cwdRefused && rec.cwdUnknown) return { go: false, why: "couldn't check in time whether its folder is yours", hint: true, retry: true };
   if (rec.cwdRefused) return { go: false, why: "its folder is missing or not yours", hint: true };
   const missing = unmet(rec, env);
   if (missing.length) return { go: false, why: `it was started with ${missing.join(", ")}`, hint: true };
