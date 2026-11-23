@@ -900,3 +900,80 @@ test("a Muse that a tool call runs below the foreground Muse doesn't own the ter
   assert.equal(hookOwner(table, 9, 7).owned, false);
   assert.deepEqual(hookOwner(table, 7, 7), { owned: true, agent: 7 });
 });
+
+// ── Antigravity CLI (agy) ───────────────────────────────────────────────────
+
+test("agy hook prints {} on stdout even outside a Herdr terminal", () => {
+  const out = execFileSync(process.execPath, [ENGINE, "hook", "--agent", "agy"], {
+    input: JSON.stringify({ hookEventName: "SessionStart", conversationId: ID }),
+    encoding: "utf8",
+    env: { ...base, HC_TERMINAL_ID: "" },
+  });
+  assert.equal(out, "{}\n");
+});
+
+const agyStart = {
+  hookEventName: "SessionStart",
+  conversationId: ID,
+  workspacePaths: ["/w"],
+  transcriptPath: `/Users/me/.gemini/antigravity-cli/brain/${ID}/.system_generated/logs/transcript.jsonl`,
+};
+const agyStop = { ...agyStart, hookEventName: "Stop" };
+
+test("agy SessionStart records camelCase payload with workspacePaths fallback and prints {}", POSIX_HARNESS, () => {
+  const agy = setup({ bin: "agy", argv: ["agy", "--model", "gemini-4", "--dangerously-skip-permissions"], app: "antigravity", hookArgs: "--agent agy" });
+  const stdout = agy.run(agyStart).toString("utf8");
+  assert.equal(stdout, "{}\n");
+  const got = agy.set(agy.calls());
+  assert.equal(got["revive.agent"], "agy");
+  assert.equal(got["revive.session"], ID);
+  assert.equal(got["revive.cwd"], "/w");
+  assert.equal(got["revive.flags"], '["--model","gemini-4","--dangerously-skip-permissions"]');
+});
+
+test("agy Stop records an unrecorded session and is a no-op once recorded", POSIX_HARNESS, () => {
+  const unrecorded = setup({ bin: "agy", argv: ["agy", "--model", "gemini-4"], app: "antigravity", hookArgs: "--agent agy" });
+  assert.equal(unrecorded.run(agyStop).toString("utf8"), "{}\n");
+  assert.equal(unrecorded.set(unrecorded.calls())["revive.session"], ID);
+
+  const already = setup({
+    bin: "agy",
+    argv: ["agy", "--model", "gemini-4"],
+    app: "antigravity",
+    hookArgs: "--agent agy",
+    labels: { ...remembered, "revive.agent": "agy", "revive.session": ID },
+  });
+  assert.equal(already.run(agyStop).toString("utf8"), "{}\n");
+  assert.deepEqual(already.calls(), []);
+});
+
+test("agy -p leaves any remembered session alone and still prints {}", POSIX_HARNESS, () => {
+  const oneShot = setup({
+    bin: "agy",
+    argv: ["agy", "-p", "hi"],
+    app: "antigravity",
+    hookArgs: "--agent agy",
+    labels: { ...remembered, "revive.agent": "agy", "revive.session": ID },
+  });
+  assert.equal(oneShot.run({ ...agyStart, conversationId: "11111111-2222-4333-8444-555566667777" }).toString("utf8"), "{}\n");
+  assert.deepEqual(oneShot.calls(), []);
+});
+
+test("agy detached watcher settles when agy exits and its shell survives, and keeps on hangup", POSIX_HARNESS, async () => {
+  const agyRec = { ...remembered, "revive.agent": "agy", "revive.session": ID };
+  const agyOpts = { bin: "agy", argv: ["agy"], app: "antigravity", hookArgs: "--agent agy", labels: agyRec };
+  // Once outer's hook finishes, FAKE_FG (outer's pid) has exited, so watch sees it dead and settles via outlived.
+  const exited = setup(agyOpts);
+  exited.run(agyStart, { env: { REVIVE_WATCH_MS: "50", REVIVE_SETTLE_MS: "150", FAKE_PID: String(process.pid) } });
+  const initialCalls = exited.calls().length;
+  for (let i = 0; i < 60 && exited.calls().length <= initialCalls; i++) await new Promise((r) => setTimeout(r, 50));
+  assert.ok(exited.calls().length > initialCalls, "watcher clears the session after agy exits");
+  assert.equal(exited.set([exited.calls().at(-1)])["revive.session"], "");
+
+  // When the terminal's shell died too (reboot / core restart), watch keeps the record.
+  const reboot = setup(agyOpts);
+  reboot.run(agyStart, { env: { REVIVE_WATCH_MS: "50", REVIVE_SETTLE_MS: "100", FAKE_PID: String(deadPid()) } });
+  const rebootCalls = reboot.calls().length;
+  await new Promise((r) => setTimeout(r, 300));
+  assert.equal(reboot.calls().length, rebootCalls, "hangup leaves the remembered session intact");
+});
