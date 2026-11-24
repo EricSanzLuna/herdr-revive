@@ -235,6 +235,11 @@ async function hook(args = []) {
     if (!terminal) return skip("no herdr terminal runs this hook's agent in its foreground");
     t = terminal.address;
   }
+  const rec = readRecord(terminal.labels);
+  // agy has no SessionEnd; Stop records a session that has no record yet (started before install or whose SessionStart timed out), and exits early once recorded before scanning processes().
+  const agyStop = event === "Stop" && hintOf(args) === "agy";
+  if (agyStop && rec?.session === session) return;
+
   // The hook must belong to the agent in the terminal's foreground, not to a
   // `claude -p` that agent ran as a tool (it inherits HC_TERMINAL_ID too).
   const target = terminal.foreground?.pid ?? terminal.pid;
@@ -242,11 +247,6 @@ async function hook(args = []) {
   table ??= await processes();
   const owner = hookOwner(table, process.ppid, target);
   if (!owner.owned) return skip(`not the foreground agent's hook (from ${process.ppid} to ${target}, ${table.size} processes)`);
-  const rec = readRecord(terminal.labels);
-
-  // agy has no SessionEnd; Stop records a session that has no record yet (started before install or whose SessionStart timed out), and exits early once recorded.
-  const agyStop = event === "Stop" && hintOf(args) === "agy";
-  if (agyStop && rec?.session === session) return;
 
   if (event === "SessionStart" || agyStop) {
     // The command line: the foreground's (exact words), else the agent
@@ -367,14 +367,33 @@ const watchMs = () => {
   const ms = Number(process.env.REVIVE_WATCH_MS ?? 5000);
   return Number.isFinite(ms) && ms > 0 ? ms : 5000;
 };
+const watchStamp = (agentPid) => join(process.env.XDG_STATE_HOME || join(homedir(), ".local", "state"), "herdr-revive", "watch", String(agentPid));
+function activeWatch(stamp) {
+  const [pid, session] = readText(stamp).trim().split("\n");
+  return isPid(pid) && validId(session) && alive(Number(pid)) ? { pid: Number(pid), session } : null;
+}
 function watchLater(t, pid, session, agentPid) {
   if (!pid || !agentPid) return;
+  if (activeWatch(watchStamp(agentPid))?.session === session) return;
   spawn(process.execPath, [ENGINE, "watch", t, session, String(pid), String(agentPid)], { detached: true, stdio: "ignore", windowsHide: true }).unref();
 }
 async function watch([t, session, pid, agentPid] = []) {
   if (!t || !validId(session) || !isPid(pid) || !isPid(agentPid)) return;
-  while (alive(Number(agentPid))) await new Promise((resolve) => setTimeout(resolve, watchMs()));
-  await settle([t, session, pid, agentPid]);
+  const stamp = watchStamp(agentPid);
+  const mine = `${process.pid}\n${session}\n`;
+  mkdirSync(dirname(stamp), { recursive: true });
+  writeFileSync(stamp, mine);
+  let superseded = false;
+  try {
+    while (alive(Number(agentPid))) {
+      await new Promise((resolve) => setTimeout(resolve, watchMs()));
+      if (readText(stamp) !== mine) { superseded = true; return; }
+    }
+    if (readText(stamp) !== mine) { superseded = true; return; }
+  } finally {
+    if (readText(stamp) === mine) rmSync(stamp, { force: true });
+  }
+  if (!superseded) await settle([t, session, pid, agentPid]);
 }
 
 async function settle([t, session, pid, agentPid] = []) {

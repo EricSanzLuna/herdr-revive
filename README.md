@@ -503,17 +503,21 @@ flags, `--session`/`--fork` or how it ends on a signal.
 
 ### Antigravity CLI
 
-- Checked by hand with `agy` 1.5.13 on Windows: `SessionStart` and `Stop` fire in
+- Checked by hand with `agy` 1.5.13 and 1.5.16 on Windows: `SessionStart` and `Stop` fire in
   `~/.gemini/config/hooks.json` with camelCase fields (`hookEventName`, `conversationId`,
   `workspacePaths`, `transcriptPath`), and `agy --conversation <id>` resumes the
   conversation after a restart or reboot.
 - Antigravity CLI has no `SessionEnd` event: `/exit` fires nothing. Instead, the hook
-  starts a detached waiter (`revive.mjs watch`) that waits for the `agy` process to exit
-  and then runs the same `outlived` check as Copilot's `user_exit` (forgetting the session
-  when the terminal's shell survived it, and keeping it on a reboot or core restart).
+  starts a detached waiter (`revive.mjs watch`, at most one active waiter per `agy`
+  process under `~/.local/state/herdr-revive/watch`) that waits for the `agy` process to
+  exit and then runs the same `outlived` check as Copilot's `user_exit` (confirmed on
+  Windows: `/exit` clears `revive.session`, while closing the terminal or restarting the
+  core keeps it).
 - `Stop` also records a session if the terminal has no record yet (a conversation started
-  before installing Revive, or whose `SessionStart` timed out), and returns early once
-  recorded.
+  before installing Revive, or whose `SessionStart` timed out), and returns early right
+  after reading terminal labels once recorded.
+- `hasTranscript` returns `true` for `agy`: because `SessionStart` only fires on a
+  conversation's first message, any recorded session already has messages to resume.
 - No fork: `agy` has no fork flag.
 
 ### Windows
